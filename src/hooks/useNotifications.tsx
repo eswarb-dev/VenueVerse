@@ -1,0 +1,170 @@
+import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { supabase } from '@/lib/supabase';
+import {
+  getUnreadNotificationCount,
+  getUserNotifications,
+  markAllNotificationsRead,
+  markNotificationRead,
+  subscribeToNotifications
+} from '@/services/notificationService';
+import { useAuth } from '@/store/AuthContext';
+import { AppNotification } from '@/types/notification';
+
+type NotificationsContextValue = {
+  notifications: AppNotification[];
+  unreadCount: number;
+  loading: boolean;
+  refreshing: boolean;
+  updating: boolean;
+  error: string;
+  fetchNotifications: () => Promise<void>;
+  fetchUnreadCount: () => Promise<void>;
+  refresh: () => Promise<void>;
+  markAsRead: (notificationId: string) => Promise<void>;
+  markAllAsRead: () => Promise<void>;
+};
+
+const NotificationsContext = createContext<NotificationsContextValue | undefined>(undefined);
+
+export function NotificationProvider({ children }: { children: ReactNode }) {
+  const { profile, user } = useAuth();
+  const userId = profile?.id ?? user?.id ?? null;
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [updating, setUpdating] = useState(false);
+  const [error, setError] = useState('');
+
+  const fetchNotifications = useCallback(async () => {
+    if (!userId) {
+      setNotifications([]);
+      return;
+    }
+
+    setError('');
+    setNotifications(await getUserNotifications(userId));
+  }, [userId]);
+
+  const fetchUnreadCount = useCallback(async () => {
+    if (!userId) {
+      setUnreadCount(0);
+      return;
+    }
+
+    setUnreadCount(await getUnreadNotificationCount(userId));
+  }, [userId]);
+
+  const refresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await Promise.all([fetchNotifications(), fetchUnreadCount()]);
+    } catch (refreshError) {
+      setError(refreshError instanceof Error ? refreshError.message : 'Unable to refresh notifications.');
+      throw refreshError;
+    } finally {
+      setRefreshing(false);
+    }
+  }, [fetchNotifications, fetchUnreadCount]);
+
+  const markAsRead = useCallback(
+    async (notificationId: string) => {
+      try {
+        setUpdating(true);
+        await markNotificationRead(notificationId);
+        await Promise.all([fetchNotifications(), fetchUnreadCount()]);
+      } catch (markError) {
+        setError(markError instanceof Error ? markError.message : 'Unable to mark notification as read.');
+        throw markError;
+      } finally {
+        setUpdating(false);
+      }
+    },
+    [fetchNotifications, fetchUnreadCount]
+  );
+
+  const markAllAsRead = useCallback(async () => {
+    if (!userId) return;
+
+    try {
+      setUpdating(true);
+      await markAllNotificationsRead(userId);
+      await Promise.all([fetchNotifications(), fetchUnreadCount()]);
+    } catch (markError) {
+      setError(markError instanceof Error ? markError.message : 'Unable to mark all notifications as read.');
+      throw markError;
+    } finally {
+      setUpdating(false);
+    }
+  }, [fetchNotifications, fetchUnreadCount, userId]);
+
+  useEffect(() => {
+    let active = true;
+
+    setLoading(true);
+    Promise.all([fetchNotifications(), fetchUnreadCount()])
+      .catch((loadError) => {
+        if (active) {
+          setError(loadError instanceof Error ? loadError.message : 'Unable to load notifications.');
+        }
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [fetchNotifications, fetchUnreadCount]);
+
+  useEffect(() => {
+    if (!userId) return;
+
+    const channel = subscribeToNotifications(userId, () => {
+      Promise.all([fetchNotifications(), fetchUnreadCount()]).catch(() => undefined);
+    });
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [fetchNotifications, fetchUnreadCount, userId]);
+
+  const value = useMemo(
+    () => ({
+      notifications,
+      unreadCount,
+      loading,
+      refreshing,
+      updating,
+      error,
+      fetchNotifications,
+      fetchUnreadCount,
+      refresh,
+      markAsRead,
+      markAllAsRead
+    }),
+    [
+      error,
+      fetchNotifications,
+      fetchUnreadCount,
+      loading,
+      markAllAsRead,
+      markAsRead,
+      notifications,
+      refresh,
+      refreshing,
+      unreadCount,
+      updating
+    ]
+  );
+
+  return <NotificationsContext.Provider value={value}>{children}</NotificationsContext.Provider>;
+}
+
+export function useNotifications() {
+  const context = useContext(NotificationsContext);
+  if (!context) {
+    throw new Error('useNotifications must be used within NotificationProvider');
+  }
+  return context;
+}

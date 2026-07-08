@@ -1,0 +1,24 @@
+{
+  "expo": {
+    "name": "VenueVerse",
+    "slug": "venueverse",
+    "scheme": "venueverse",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "assetBundlePatterns": ["**/*"],
+    "plugins": ["expo-notifications"],
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.venueverse.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#0F3D5E"
+      }
+    },
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}
