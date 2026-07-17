@@ -12,5 +12,7 @@ yarn-error.log*
 
 *.zip
 *.png
+!assets/**/*.png
+!android/app/src/main/res/**/*.png
 
 supabase pass.txt
