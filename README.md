@@ -128,11 +128,11 @@ Git + GitHub
 
 🎬 Demo
 
+## 🎬 Demo
+
 <div align="center">
 
-<video src="Demo/demo_video.mp4" width="700" controls>
-  Your browser does not support embedded video.
-</video>
+[▶ Watch the VenueVerse Demo](Demo/demo_video.mp4)
 
 </div>
 
