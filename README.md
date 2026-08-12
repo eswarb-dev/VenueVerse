@@ -1,170 +1,296 @@
-# VenueVerse
+<div align="center">
 
-VenueVerse is a college venue booking and approval app for users and admins. Users can browse halls, check availability, submit booking requests, track request status, and receive in-app notifications. Admins can review requests, approve or reject bookings, manage hall records, manage users, and control user roles.
+<img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=6,11,20&height=190&section=header&text=VenueVerse&fontSize=55&fontColor=ffffff&animation=fadeIn&fontAlignY=38&desc=Campus%20Venue%20Booking%20%26%20Approval%20System&descAlignY=58&descSize=18" width="100%">
 
-## Tech Stack
+<br>
 
-- React Native with Expo
-- TypeScript
-- Supabase Auth
-- Supabase PostgreSQL
-- Supabase Storage
-- Supabase Realtime
-- Supabase Edge Functions
-- Expo Notifications
-- React Navigation Native Stack
-- Expo SecureStore
-- date-fns
+<a href="#">
+  <img src="https://readme-typing-svg.demolab.com/?font=Fira+Code&weight=600&size=22&pause=1000&color=6C5CE7&center=true&vCenter=true&width=700&lines=Discover+available+campus+venues;Request.+Approve.+Track.;Simplifying+campus+venue+coordination" alt="Typing SVG">
+</a>
 
-## Features
+<br><br>
 
-- Email/password authentication with secure session persistence
-- Admin account creation with temporary passwords
-- Role-based navigation for users and admins
-- Hall browsing with search, capacity filters, facility filters, and detail screens
-- Venue availability lookup by hall and date
-- Booking request form with validation and database overlap checks
-- User booking history with status filters and cancellation for pending requests
-- Admin dashboard with booking and hall counts
-- Pending request review with approval and rejection workflows
-- Conflict prevention during user booking and admin approval
-- Hall management with active/inactive status and Supabase Storage image uploads
-- Admin user management and role changes
-- In-app notifications with unread badge and realtime updates
-- Expo push notifications for booking requests, approvals, and rejections
-- Professional institutional UI with shared theme, buttons, inputs, cards, badges, loading, empty, and error states
+<img src="https://img.shields.io/github/last-commit/eswarb-dev/VenueVerse?style=for-the-badge&color=6C5CE7&labelColor=1a1a1a" />
+<img src="https://img.shields.io/github/languages/top/eswarb-dev/VenueVerse?style=for-the-badge&color=00cec9&labelColor=1a1a1a" />
+<img src="https://img.shields.io/github/repo-size/eswarb-dev/VenueVerse?style=for-the-badge&color=fdcb6e&labelColor=1a1a1a" />
+<img src="https://img.shields.io/github/stars/eswarb-dev/VenueVerse?style=for-the-badge&color=e17055&labelColor=1a1a1a" />
+<img src="https://img.shields.io/badge/platform-Android-3DDC84?style=for-the-badge&logo=android&logoColor=white" />
 
-## User Roles
+<br><br>
 
-| Role | Access |
-| --- | --- |
-| `user` | Browse active halls, check availability, create booking requests, view own bookings, cancel pending bookings, read notifications, edit own profile. |
-| `admin` | Access admin dashboard, review all bookings, approve or reject requests, create notifications, manage halls, manage users, create accounts, and update roles. |
+<a href="https://play.google.com/store/apps/details?id=com.srec.aids.venueverse">
+  <img src="https://img.shields.io/badge/Google_Play-View_App-414141?style=for-the-badge&logo=googleplay&logoColor=white" />
+</a>
 
-## Account Creation
+</div>
 
-Accounts are created only by an admin from the Users tab. Users receive a temporary password and can change it from Profile after signing in.
+<br>
 
-## Installation
+<img src="https://capsule-render.vercel.app/api?type=rect&color=gradient&customColorList=6,11,20&height=3&section=header" width="100%">
 
-1. Install Node.js LTS.
-2. Install Expo tooling if needed:
+📖 About VenueVerse
 
-```bash
-npm install -g expo
-```
+VenueVerse is a mobile-first campus venue booking and approval system designed to simplify how institutional halls and shared spaces are discovered, requested, approved, and tracked.
 
-3. Install project dependencies:
+Instead of handling venue coordination through scattered messages or manual records, VenueVerse provides a structured workflow for users to view venues, submit booking requests, follow approval progress, receive status updates, and access booking receipts from one place.
 
-```bash
+<br>
+
+<img src="https://capsule-render.vercel.app/api?type=rect&color=gradient&customColorList=6,11,20&height=3&section=header" width="100%">
+
+✨ Core Features
+
+🏛️ Campus Venue Discovery — browse available halls and venue information
+
+📅 Booking Requests — submit venue requests with event details
+
+✅ Approval Workflow — route bookings through designated department approvers
+
+🔄 Booking Status Tracking — follow requests from submission to approval or rejection
+
+🔔 Push Notifications — receive important booking and approval updates
+
+🧾 Booking Receipts — maintain structured booking confirmation records
+
+👤 Secure User Profiles — authenticated access linked to user accounts
+
+🛡️ Role-Based Data Access — protected backend access using Supabase Row Level Security
+
+📱 Android-First Experience — optimized for mobile campus usage
+
+<br>
+
+<img src="https://capsule-render.vercel.app/api?type=rect&color=gradient&customColorList=6,11,20&height=3&section=header" width="100%">
+
+🛠️ Tech Stack
+
+<div align="center">
+
+<img src="https://skillicons.dev/icons?i=react,typescript,supabase,firebase,androidstudio,git,github,vscode&theme=dark" />
+
+</div>
+
+<br>
+
+Layer
+
+Technology
+
+Mobile App
+
+React Native + Expo
+
+Language
+
+TypeScript / JavaScript
+
+Authentication
+
+Supabase Auth
+
+Database
+
+Supabase PostgreSQL
+
+Security
+
+Supabase Row Level Security
+
+Notifications
+
+Firebase Cloud Messaging / Expo Notifications
+
+Android Build
+
+Gradle
+
+Distribution
+
+Google Play Console
+
+Version Control
+
+Git + GitHub
+
+<br>
+
+<img src="https://capsule-render.vercel.app/api?type=rect&color=gradient&customColorList=6,11,20&height=3&section=header" width="100%">
+
+🏗️ Architecture
+
+flowchart TD
+    A[VenueVerse Mobile App] --> B[Supabase Authentication]
+    A --> C[Supabase PostgreSQL]
+
+    C --> D[Profiles]
+    C --> E[Halls]
+    C --> F[Bookings]
+    C --> G[Department Approvers]
+    C --> H[Notifications]
+    C --> I[Booking Receipts]
+
+    F --> J[Approval Workflow]
+    J --> G
+    J --> H
+
+    H --> K[Push Notification Delivery]
+    K --> L[Firebase / Expo Notifications]
+
+    F --> I
+
+<br>
+
+<img src="https://capsule-render.vercel.app/api?type=rect&color=gradient&customColorList=6,11,20&height=3&section=header" width="100%">
+
+🔄 Booking Flow
+
+flowchart LR
+    A[Sign In] --> B[Browse Venues]
+    B --> C[Select Venue]
+    C --> D[Submit Booking Request]
+    D --> E[Approver Review]
+    E -->|Approved| F[Booking Confirmed]
+    E -->|Rejected| G[Request Rejected]
+    F --> H[Notification]
+    F --> I[Booking Receipt]
+
+<br>
+
+<img src="https://capsule-render.vercel.app/api?type=rect&color=gradient&customColorList=6,11,20&height=3&section=header" width="100%">
+
+📂 Project Structure
+
+VenueVerse/
+├── android/            # Native Android project and Gradle configuration
+├── assets/             # App images, icons and static assets
+├── cloudflare/         # Cloud-side utilities/services used by the project
+├── docs/               # Project documentation
+├── src/                # React Native application source
+├── supabase/           # Supabase database/backend configuration
+├── App.tsx             # Application entry component
+├── app.json            # Expo application configuration
+├── package.json        # Dependencies and scripts
+├── tsconfig.json       # TypeScript configuration
+└── .env.example        # Environment-variable template
+
+Sensitive files such as local .env files, signing credentials, passwords, private keys and local secret directories should never be committed to the repository.
+
+<br>
+
+<img src="https://capsule-render.vercel.app/api?type=rect&color=gradient&customColorList=6,11,20&height=3&section=header" width="100%">
+
+🚀 Getting Started
+
+1. Clone the repository
+
+git clone https://github.com/eswarb-dev/VenueVerse.git
+cd VenueVerse
+
+2. Install dependencies
+
 npm install
-```
 
-4. Create a Supabase project and run the SQL in `supabase/schema.sql`.
-5. Copy `.env.example` to `.env` and fill in your Supabase credentials.
+3. Configure environment variables
 
-## Environment Variables
+Create your local environment file using the provided template:
 
-The app uses Expo public environment variables:
+cp .env.example .env
 
-```env
-EXPO_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-EXPO_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-```
+Add the required project values locally.
 
-These values are read in `src/lib/supabase.ts`.
+Do not commit .env, signing passwords, service-account credentials, keystores, or other private secrets.
 
-## Running the App
+4. Start the development server
 
-Start the Expo development server:
-
-```bash
 npm start
-```
 
-Run on Android:
+or
 
-```bash
-npm run android
-```
+npx expo start
 
-Run on iOS:
+<br>
 
-```bash
-npm run ios
-```
+<img src="https://capsule-render.vercel.app/api?type=rect&color=gradient&customColorList=6,11,20&height=3&section=header" width="100%">
 
-Run on web:
+🤖 Android Release Build
 
-```bash
-npm run web
-```
+From the Android directory:
 
-Type-check the project:
+cd android
+.\gradlew.bat bundleRelease
 
-```bash
-npm run typecheck
-```
+The generated Android App Bundle is created under:
 
-## Screenshots
+android/app/build/outputs/bundle/release/
 
-Add production screenshots here after connecting the app to a seeded Supabase project.
+Before publishing a release, verify the version code, signing configuration, lint result, and Play Console compatibility checks.
 
-| Screen | Screenshot |
-| --- | --- |
-| Login | Placeholder |
-| User Home | Placeholder |
-| Hall Details | Placeholder |
-| Booking Form | Placeholder |
-| Admin Dashboard | Placeholder |
-| Booking Review | Placeholder |
+<br>
 
-## Project Structure
+<img src="https://capsule-render.vercel.app/api?type=rect&color=gradient&customColorList=6,11,20&height=3&section=header" width="100%">
 
-```text
-src/
-  components/      Reusable UI components
-  constants/       Theme and facility constants
-  hooks/           Shared hooks
-  lib/             Supabase client setup
-  navigation/      Root, auth, app, and admin navigation
-  screens/         Feature screens grouped by domain
-  services/        Supabase data access services
-  store/           Auth context and global app state
-  types/           TypeScript domain types
-  utils/           Shared utility functions
-supabase/
-  schema.sql       Database schema, RLS policies, triggers, storage setup
-  functions/       Supabase Edge Functions for server-side push delivery
-```
+🔐 Security Notes
 
-## Push Notifications
+VenueVerse is designed with repository and backend security in mind.
 
-VenueVerse registers the device's Expo push token after login and stores it in Supabase `push_tokens`. Booking request, approval, and rejection flows keep the existing in-app notifications and additionally call the `send-push-notification` Supabase Edge Function, which sends messages to Expo Push API.
+Environment secrets remain outside Git tracking
 
-Expo push tokens require an EAS project ID. After creating/linking the EAS project, add it to `app.json`:
+Android signing credentials are kept local
 
-```json
-{
-  "expo": {
-    "extra": {
-      "eas": {
-        "projectId": "your-eas-project-id"
-      }
-    }
-  }
-}
-```
+Supabase Row Level Security protects database access
 
-For reliable phone push testing, use an EAS development build or production build. Expo Go can be useful for partial checks, but final notification behavior should be verified on a real device build. Expo Go may still show Expo Go branding or skip the final Android notification icon, so treat development builds, APKs, and EAS preview builds as the source of truth for notification branding.
+Authentication is required for protected application workflows
 
-## Future Enhancements
+Sensitive configuration should be supplied through environment variables or secure local configuration
 
-- Calendar-style venue availability view
-- Booking edit/reschedule workflow
-- Recurring booking requests
-- Advanced admin analytics and export reports
-- Department-level approval chains
-- Audit log for admin actions
-- Attachment uploads for event documents
-- Offline-friendly cache for halls and bookings
+Production credentials should never be embedded directly in application source code
+
+<br>
+
+<img src="https://capsule-render.vercel.app/api?type=rect&color=gradient&customColorList=6,11,20&height=3&section=header" width="100%">
+
+🗺️ Roadmap
+
+Core campus venue booking flow
+
+Supabase authentication and database integration
+
+Booking approval workflow
+
+Booking status notifications
+
+Android release build pipeline
+
+Production rollout through Google Play
+
+Expanded booking analytics and reports
+
+Improved venue availability visualization
+
+Additional administrative workflow enhancements
+
+<br>
+
+<img src="https://capsule-render.vercel.app/api?type=rect&color=gradient&customColorList=6,11,20&height=3&section=header" width="100%">
+
+📱 Google Play
+
+VenueVerse is distributed through Google Play for Android testing and release management.
+
+Package: com.srec.aids.venueverse
+
+▶ View VenueVerse on Google Play
+
+<br>
+
+👨‍💻 Maintainer
+
+<div align="center">
+
+Built and maintained by eswarb-dev
+
+<br><br>
+
+<img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=6,11,20&height=100&section=footer" width="100%">
+
+</div>
