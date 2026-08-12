@@ -11,7 +11,7 @@
 - Recurring bookings are not detected in the current codebase.
 - Department-level multi-step approvals are not detected in the current codebase.
 - Audit log table for admin actions is not detected in the current codebase.
-- `register_number` and `phone` exist in the database but are not detected in the current super admin account creation payload.
+- `register_number` and `phone` exist in the database but are not detected in the current admin account creation payload.
 - `purpose`, `audience_count`, and `additional_requirements` exist in the database but are not detected in the current booking creation payload.
 - `AdminPlaceholderScreen` exists but is not detected in active navigation.
 

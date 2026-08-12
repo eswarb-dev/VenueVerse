@@ -131,6 +131,10 @@ function SlotCard({ slot }: { slot: AvailabilitySlot }) {
       <Text style={styles.slotTime}>
         {format(new Date(slot.startTime), 'h:mm a')} - {format(new Date(slot.endTime), 'h:mm a')}
       </Text>
+      <Text style={styles.slotMeta}>
+        Booked by {slot.requesterName ?? 'Requester'}{slot.requesterDepartment ? ` • ${slot.requesterDepartment}` : ''}
+      </Text>
+      {slot.hallName ? <Text style={styles.slotMeta}>Venue: {slot.hallName}</Text> : null}
     </View>
   );
 }
@@ -208,5 +212,11 @@ const styles = StyleSheet.create({
     color: colors.primary,
     fontSize: fontSizes.sm,
     fontWeight: '900'
+  },
+  slotMeta: {
+    color: colors.textMuted,
+    fontSize: fontSizes.sm,
+    fontWeight: '700',
+    lineHeight: 20
   }
 });

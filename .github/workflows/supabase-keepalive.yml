@@ -2,18 +2,25 @@ name: Supabase Keepalive
 
 on:
   schedule:
-    # Runs every day at 03:00 UTC
+    # External keepalive ping. Reads one harmless healthcheck row daily.
+    # This does not change app data and does not write dummy rows repeatedly.
     - cron: "0 3 * * *"
   workflow_dispatch:
 
 jobs:
-  ping-supabase:
+  ping:
+    name: Ping app healthcheck row
     runs-on: ubuntu-latest
-
     steps:
-      - name: Ping Supabase healthcheck table
+      - name: Read Supabase healthcheck row
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
-          curl -fsS \
-            "${{ secrets.SUPABASE_URL }}/rest/v1/app_healthcheck?id=eq.1&select=id,name" \
-            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
-            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}"
+          set -euo pipefail
+
+          curl --fail --show-error --silent \
+            "${SUPABASE_URL}/rest/v1/app_healthcheck?id=eq.1&select=id,name" \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}" \
+            -H "Accept: application/json"

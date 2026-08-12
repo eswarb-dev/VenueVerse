@@ -10,9 +10,9 @@
 
 ## Project Summary
 
-VenueVerse is a React Native + Expo mobile application backed by Supabase for college venue booking and approval. Users can book venues, admins can approve or reject requests, and super admins can manage users and venues.
+VenueVerse is a React Native + Expo mobile application backed by Supabase for college venue booking and approval. Users can book venues, and admins can approve or reject requests, manage users, and manage venues.
 
-Accounts are created only by a super admin from the Users tab. Users receive a temporary password and can change it from Profile after signing in.
+Accounts are created only by an admin from the Users tab. Users receive a temporary password and can change it from Profile after signing in.
 
 ## Requirements
 
@@ -108,6 +108,6 @@ Add the EAS project id in `app.json`:
 
 Expo Go is useful for development, but production push notification validation should happen on an EAS development or production build.
 
-## First Super Admin
+## First Admin
 
-The schema currently promotes `eswar.2411018@srec.ac.in` to `super_admin`. For any other first admin account, create or invite the first account through Supabase, then update the profile role manually to `super_admin`.
+The schema currently promotes `eswar.2411018@srec.ac.in` to `admin`. For any other first admin account, create or invite the first account through Supabase, then update the profile role manually to `admin`.

@@ -8,6 +8,9 @@ export type Profile = {
   email: string;
   department: string | null;
   role: UserRole;
+  authProvider?: string | null;
+  isStaffVerified?: boolean;
+  onboardingCompleted?: boolean;
 };
 
 export type AuthState = {
@@ -15,4 +18,7 @@ export type AuthState = {
   user: User | null;
   profile: Profile | null;
   loading: boolean;
+  isPasswordRecovery: boolean;
+  needsStaffOnboarding: boolean;
+  authMessage: string;
 };

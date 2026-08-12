@@ -1,49 +1,40 @@
+import { CompositeScreenProps, useFocusEffect } from '@react-navigation/native';
+import { BottomTabScreenProps, useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useMemo, useState } from 'react';
-import { FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorView } from '@/components/ErrorView';
 import { LoadingView } from '@/components/LoadingView';
 import { colors, fontSizes, radius, spacing } from '@/constants/theme';
-import { AdminStackParamList } from '@/navigation/types';
+import { EXTRA_TAB_PADDING, TOP_SAFE_AREA_PADDING } from '@/constants/layout';
+import { AdminStackParamList, AdminTabParamList } from '@/navigation/types';
 import { getAllAdminBookings } from '@/services/adminService';
+import { useAuth } from '@/store/AuthContext';
 import { AdminBookingSummary, BookingStatus } from '@/types/venue';
 import { AdminBookingCard } from '@/screens/admin/PendingRequestsScreen';
 
-type Props = NativeStackScreenProps<AdminStackParamList, 'AllBookings'>;
-
-const departmentFilters = [
-  'All',
-  'IT',
-  'AI&DS',
-  'EEE',
-  'ECE',
-  'BME',
-  'CSE',
-  'CIVIL',
-  'AERO',
-  'MBA',
-  'NANO',
-  'MECH',
-  'EIE',
-  'Library',
-  'Administrative Office',
-  'Others'
-];
+type Props = CompositeScreenProps<
+  BottomTabScreenProps<AdminTabParamList, 'Bookings'>,
+  NativeStackScreenProps<AdminStackParamList>
+>;
 
 export function AllBookingsScreen({ navigation, route }: Props) {
+  const tabBarHeight = useBottomTabBarHeight();
+  const insets = useSafeAreaInsets();
   const [bookings, setBookings] = useState<AdminBookingSummary[]>([]);
   const statusFilter = route.params?.status;
-  const [selectedDepartment, setSelectedDepartment] = useState('All');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const { profile } = useAuth();
+  const isSuperAdmin = profile?.role === 'super_admin';
 
-  const loadBookings = useCallback(async () => {
+  const loadBookings = useCallback(async (forceRefresh = false) => {
     setError('');
-    setBookings(await getAllAdminBookings(statusFilter));
-  }, [statusFilter]);
+    setBookings(await getAllAdminBookings(statusFilter, profile, { forceRefresh }));
+  }, [profile, statusFilter]);
 
   useFocusEffect(
     useCallback(() => {
@@ -58,7 +49,7 @@ export function AllBookingsScreen({ navigation, route }: Props) {
   const onRefresh = async () => {
     setRefreshing(true);
     try {
-      await loadBookings();
+      await loadBookings(true);
     } catch (refreshError) {
       setError(refreshError instanceof Error ? refreshError.message : 'Unable to refresh bookings.');
     } finally {
@@ -66,99 +57,66 @@ export function AllBookingsScreen({ navigation, route }: Props) {
     }
   };
 
-  const filteredBookings = useMemo(() => {
-    const nextBookings =
-      selectedDepartment === 'All'
-        ? bookings
-        : bookings.filter((booking) => booking.resolvedDepartment === selectedDepartment);
-
-    return [...nextBookings].sort(sortBookingsNewestFirst);
-  }, [bookings, selectedDepartment]);
+  const filteredBookings = useMemo(() => [...bookings].sort(sortBookingsNewestFirst), [bookings]);
+  const renderBooking = useCallback(({ item }: { item: AdminBookingSummary }) => (
+    <AdminBookingCard booking={item} onPress={() => navigation.navigate('BookingReview', { bookingId: item.id })} />
+  ), [navigation]);
 
   if (loading) return <LoadingView message={`Loading ${getAllBookingsTitle(statusFilter).toLowerCase()}...`} />;
 
   return (
     <FlatList
       style={styles.root}
-      contentContainerStyle={styles.content}
+      contentContainerStyle={[
+        styles.content,
+        {
+          paddingTop: insets.top + TOP_SAFE_AREA_PADDING,
+          paddingBottom: tabBarHeight + EXTRA_TAB_PADDING
+        }
+      ]}
       data={filteredBookings}
       keyExtractor={(item) => item.id}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       ListHeaderComponent={
         <View style={styles.header}>
           {error ? <ErrorView message={error} onRetry={() => void onRefresh()} /> : null}
-          <DepartmentFilterRow selectedDepartment={selectedDepartment} onSelect={setSelectedDepartment} />
+          <Text style={styles.scopeText}>{isSuperAdmin ? 'Showing bookings across all departments.' : 'Showing bookings for venues in your department.'}</Text>
         </View>
       }
       ListEmptyComponent={
         <EmptyState
-          title={getEmptyTitle(statusFilter, selectedDepartment)}
-          message={getEmptyMessage(statusFilter, selectedDepartment)}
+          title={getEmptyTitle(statusFilter)}
+          message={getEmptyMessage(statusFilter)}
         />
       }
-      renderItem={({ item }) => (
-        <AdminBookingCard booking={item} onPress={() => navigation.navigate('BookingReview', { bookingId: item.id })} />
-      )}
+      renderItem={renderBooking}
     />
-  );
-}
-
-function DepartmentFilterRow({
-  selectedDepartment,
-  onSelect
-}: {
-  selectedDepartment: string;
-  onSelect: (department: string) => void;
-}) {
-  return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={styles.departmentRow}
-    >
-      {departmentFilters.map((department) => {
-        const active = selectedDepartment === department;
-        return (
-          <Pressable
-            key={department}
-            onPress={() => onSelect(department)}
-            style={[styles.departmentChip, active && styles.departmentChipActive]}
-          >
-            <Text style={[styles.departmentChipText, active && styles.departmentChipTextActive]}>
-              {department}
-            </Text>
-          </Pressable>
-        );
-      })}
-    </ScrollView>
   );
 }
 
 function getAllBookingsTitle(status?: BookingStatus) {
   if (status === 'approved') return 'Approved Bookings';
   if (status === 'rejected') return 'Rejected Bookings';
+  if (status === 'revoked') return 'Revoked Bookings';
   if (status === 'pending') return 'Pending Bookings';
   if (status === 'cancelled') return 'Cancelled Bookings';
   if (status === 'completed') return 'Completed Bookings';
   return 'All Bookings';
 }
 
-function getEmptyTitle(status?: BookingStatus, department = 'All') {
-  const departmentSuffix = department === 'All' ? '' : ` for ${department}`;
-  if (status === 'approved') return `No approved bookings found${departmentSuffix}.`;
-  if (status === 'rejected') return `No rejected bookings found${departmentSuffix}.`;
-  if (status === 'pending') return `No pending bookings found${departmentSuffix}.`;
-  if (status === 'cancelled') return `No cancelled bookings found${departmentSuffix}.`;
-  if (status === 'completed') return `No completed bookings found${departmentSuffix}.`;
-  if (department !== 'All') return `No bookings found for ${department}.`;
+function getEmptyTitle(status?: BookingStatus) {
+  if (status === 'approved') return 'No approved bookings found.';
+  if (status === 'rejected') return 'No rejected bookings found.';
+  if (status === 'revoked') return 'No revoked bookings found.';
+  if (status === 'pending') return 'No pending bookings found.';
+  if (status === 'cancelled') return 'No cancelled bookings found.';
+  if (status === 'completed') return 'No completed bookings found.';
   return 'No bookings found';
 }
 
-function getEmptyMessage(status?: BookingStatus, department = 'All') {
-  if (status && department !== 'All') return 'Bookings matching this status and department will appear here.';
-  if (status) return 'Bookings matching this status will appear here.';
-  if (department !== 'All') return 'Bookings from this department will appear here.';
-  return 'All submitted bookings will appear here.';
+function getEmptyMessage(status?: BookingStatus) {
+  if (status) return 'Bookings matching this status for your department venues will appear here.';
+  return 'Bookings for your department venues will appear here.';
 }
 
 function sortBookingsNewestFirst(a: AdminBookingSummary, b: AdminBookingSummary) {
@@ -183,30 +141,9 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     marginBottom: spacing.md
   },
-  departmentRow: {
-    gap: spacing.sm,
-    paddingRight: spacing.md
-  },
-  departmentChip: {
-    minHeight: 38,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.md,
-    backgroundColor: colors.surface
-  },
-  departmentChipActive: {
-    borderColor: colors.primary,
-    backgroundColor: colors.primary
-  },
-  departmentChipText: {
+  scopeText: {
     color: colors.textMuted,
     fontSize: fontSizes.sm,
-    fontWeight: '900'
-  },
-  departmentChipTextActive: {
-    color: colors.surface
+    fontWeight: '800'
   }
 });

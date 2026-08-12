@@ -1,6 +1,6 @@
 import { supabase } from '@/lib/supabase';
-import { sendPushNotification } from '@/lib/notifications';
 import { createNotification } from '@/services/notificationService';
+import { clearCachedValue, measureAsync, withCache } from '@/utils/performanceCache';
 import {
   AvailabilitySlot,
   BookingAvailability,
@@ -9,11 +9,13 @@ import {
   BookingStats,
   BookingStatus,
   CreateBookingInput,
-  TodayBookedHall
+  TodayBookedHall,
+  BookedHallForDate
 } from '@/types/venue';
 
 type BookingRow = {
   id: string;
+  user_id?: string | null;
   event_title: string;
   status: BookingStatus;
   start_time: string;
@@ -33,11 +35,22 @@ type BookingRow = {
         location?: string | null;
       }[]
     | null;
+  requester?:
+    | {
+        full_name: string | null;
+        department: string | null;
+      }
+    | {
+        full_name: string | null;
+        department: string | null;
+      }[]
+    | null;
 };
 
 type BookingDetailsRow = {
   id: string;
   hall_id: string | null;
+  user_id: string | null;
   event_title: string;
   event_type: string | null;
   department: string | null;
@@ -46,11 +59,16 @@ type BookingDetailsRow = {
   end_time: string;
   status: BookingStatus;
   admin_remarks: string | null;
+  revocation_reason: string | null;
+  revoked_at: string | null;
+  revoked_by_name: string | null;
+  revoked_by_department: string | null;
   created_at: string | null;
   updated_at: string | null;
   halls:
     | {
         name: string;
+        department: string | null;
         block: string | null;
         floor: string | null;
         capacity: number;
@@ -59,11 +77,24 @@ type BookingDetailsRow = {
       }
     | {
         name: string;
+        department: string | null;
         block: string | null;
         floor: string | null;
         capacity: number;
         facilities: string[] | null;
         image_url: string | null;
+      }[]
+    | null;
+  requester:
+    | {
+        full_name: string;
+        email: string;
+        department: string | null;
+      }
+    | {
+        full_name: string;
+        email: string;
+        department: string | null;
       }[]
     | null;
   approver:
@@ -82,6 +113,18 @@ type AvailabilityRow = {
   id: string;
   hall_id?: string | null;
   event_title: string;
+  status: 'pending' | 'approved';
+  start_time: string;
+  end_time: string;
+};
+
+type BookedSlotInfoRpcRow = {
+  booking_id: string;
+  hall_id: string | null;
+  hall_name: string | null;
+  event_title: string;
+  requester_name: string | null;
+  requester_department: string | null;
   status: 'pending' | 'approved';
   start_time: string;
   end_time: string;
@@ -128,30 +171,85 @@ type TodayBookedHallQueryRow = {
 type CreatedBookingRow = {
   id: string;
   event_title: string;
-  halls: { name: string } | { name: string }[] | null;
+  department: string | null;
+  halls: { name: string; department: string | null } | { name: string; department: string | null }[] | null;
+  profiles: { full_name: string | null; department: string | null } | { full_name: string | null; department: string | null }[] | null;
 };
 
-type AdminNotificationRecipientRow = {
-  user_id: string;
+type DepartmentBookingRpcRow = {
+  id: string;
+  user_id: string | null;
+  requester_name: string | null;
+  requester_department: string | null;
+  event_title: string;
+  status: BookingStatus;
+  start_time: string;
+  end_time: string;
+  created_at: string | null;
+  hall_name: string | null;
+  hall_department: string | null;
+  hall_venue_type: string | null;
+  hall_location: string | null;
 };
 
-export async function getUserBookingStats(userId: string): Promise<BookingStats> {
-  const { data, error } = await supabase
+type VisibleBookingDetailsRpcRow = {
+  id: string;
+  hall_id: string | null;
+  user_id: string | null;
+  requester_name: string | null;
+  requester_email: string | null;
+  requester_department: string | null;
+  event_title: string;
+  event_type: string | null;
+  department: string | null;
+  faculty_coordinator: string | null;
+  start_time: string;
+  end_time: string;
+  status: BookingStatus;
+  admin_remarks: string | null;
+  revocation_reason: string | null;
+  revoked_at: string | null;
+  revoked_by_name: string | null;
+  revoked_by_department: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  hall_name: string | null;
+  hall_department: string | null;
+  hall_block: string | null;
+  hall_floor: string | null;
+  hall_capacity: number | null;
+  hall_facilities: string[] | null;
+  hall_image_url: string | null;
+  approver_name: string | null;
+  approver_email: string | null;
+};
+
+const BOOKING_LIST_CACHE_TTL_MS = 30_000;
+const BOOKING_DETAILS_CACHE_TTL_MS = 20_000;
+const BOOKED_HALLS_BY_DATE_CACHE_TTL_MS = 30_000;
+const BOOKING_CONFLICT_MESSAGE = 'This venue session was just booked by another user. Please choose another slot.';
+
+export async function getUserBookingStats(userId: string, options?: { forceRefresh?: boolean }): Promise<BookingStats> {
+  return withCache(`booking-stats:${userId}`, 20_000, () => measureAsync('bookingService.getUserBookingStats', async () => {
+    const [pending, approved, rejected] = await Promise.all([
+      countUserBookingsByStatus(userId, 'pending'),
+      countUserBookingsByStatus(userId, 'approved'),
+      countUserBookingsByStatus(userId, 'rejected')
+    ]);
+
+    return { pending, approved, rejected };
+  }), options?.forceRefresh);
+}
+
+async function countUserBookingsByStatus(userId: string, status: BookingStatus): Promise<number> {
+  const { count, error } = await supabase
     .from('bookings')
-    .select('status')
+    .select('id', { count: 'exact', head: true })
     .eq('user_id', userId)
-    .in('status', ['pending', 'approved', 'rejected']);
+    .eq('status', status);
 
   if (error) throw error;
-
-  return (data ?? []).reduce<BookingStats>(
-    (stats, booking) => {
-      const status = booking.status as keyof BookingStats;
-      stats[status] += 1;
-      return stats;
-    },
-    { pending: 0, approved: 0, rejected: 0 }
-  );
+  return count ?? 0;
 }
 
 export async function getUserBookingsCount(userId: string): Promise<number> {
@@ -190,6 +288,17 @@ export async function getRecentUserBookings(userId: string): Promise<BookingPrev
 
 export async function getTodayBookedHalls(): Promise<TodayBookedHall[]> {
   const { startIso, endIso } = getLocalDayRange();
+  return loadBookedHallsForRange(startIso, endIso);
+}
+
+export async function getBookedHallsForDate(dateKey: string, options?: { forceRefresh?: boolean }): Promise<BookedHallForDate[]> {
+  return withCache(`booked-halls:date:${dateKey}`, BOOKED_HALLS_BY_DATE_CACHE_TTL_MS, async () => {
+    const { startIso, endIso } = getLocalDayRange(parseLocalDateKey(dateKey));
+    return loadBookedHallsForRange(startIso, endIso);
+  }, options?.forceRefresh);
+}
+
+async function loadBookedHallsForRange(startIso: string, endIso: string): Promise<TodayBookedHall[]> {
   const { data, error } = await supabase.rpc('get_today_booked_halls', {
     day_start: startIso,
     day_end: endIso
@@ -203,8 +312,8 @@ export async function getTodayBookedHalls(): Promise<TodayBookedHall[]> {
     .from('bookings')
     .select('id, hall_id, event_title, start_time, end_time, status, created_at, halls(name, department, venue_type, location)')
     .in('status', ['pending', 'approved'])
-    .gte('start_time', startIso)
     .lt('start_time', endIso)
+    .gt('end_time', startIso)
     .order('created_at', { ascending: false });
 
   if (fallbackError) throw fallbackError;
@@ -227,10 +336,14 @@ export async function getTodayBookedHalls(): Promise<TodayBookedHall[]> {
   });
 }
 
-export async function getUserBookings(userId: string): Promise<BookingPreview[]> {
+export async function getUserBookings(userId: string, options?: { forceRefresh?: boolean }): Promise<BookingPreview[]> {
+  return withCache(`bookings:user:${userId}`, BOOKING_LIST_CACHE_TTL_MS, () => measureAsync('bookingService.getUserBookings', () => loadUserBookings(userId)), options?.forceRefresh);
+}
+
+async function loadUserBookings(userId: string): Promise<BookingPreview[]> {
   const { data, error } = await supabase
     .from('bookings')
-    .select('id, event_title, status, start_time, end_time, created_at, halls(name, department, venue_type, location)')
+    .select('id, user_id, event_title, status, start_time, end_time, created_at, halls(name, department, venue_type, location), requester:user_id(full_name, department)')
     .eq('user_id', userId)
     .order('created_at', { ascending: false });
 
@@ -238,39 +351,70 @@ export async function getUserBookings(userId: string): Promise<BookingPreview[]>
 
   return ((data ?? []) as BookingRow[]).map((row) => {
     const hall = Array.isArray(row.halls) ? row.halls[0] : row.halls;
+    const requester = Array.isArray(row.requester) ? row.requester[0] : row.requester;
 
     return {
       id: row.id,
+      requesterId: row.user_id ?? null,
+      requesterName: requester?.full_name ?? null,
+      requesterDepartment: requester?.department ?? null,
       eventTitle: row.event_title,
       status: row.status,
       startTime: row.start_time,
       endTime: row.end_time,
       hallName: hall?.name ?? null,
+      hallDepartment: hall?.department ?? null,
+      hallVenueType: hall?.venue_type ?? null,
+      hallLocation: hall?.location ?? null,
       createdAt: row.created_at
     };
   });
 }
 
-export async function getBookingDetails(bookingId: string): Promise<BookingDetails | null> {
+export async function getMyDepartmentBookings(options?: { forceRefresh?: boolean }): Promise<BookingPreview[]> {
+  return withCache('bookings:my-department', BOOKING_LIST_CACHE_TTL_MS, () => measureAsync('bookingService.getMyDepartmentBookings', loadMyDepartmentBookings), options?.forceRefresh);
+}
+
+async function loadMyDepartmentBookings(): Promise<BookingPreview[]> {
+  const { data, error } = await supabase.rpc('get_my_department_bookings');
+
+  if (error) throw error;
+
+  return ((data ?? []) as DepartmentBookingRpcRow[]).map((row) => ({
+    id: row.id,
+    requesterId: row.user_id,
+    requesterName: row.requester_name,
+    requesterDepartment: row.requester_department,
+    eventTitle: row.event_title,
+    status: row.status,
+    startTime: row.start_time,
+    endTime: row.end_time,
+    hallName: row.hall_name,
+    hallDepartment: row.hall_department,
+    hallVenueType: row.hall_venue_type,
+    hallLocation: row.hall_location,
+    createdAt: row.created_at ?? undefined
+  }));
+}
+
+export async function getBookingDetails(bookingId: string, options?: { forceRefresh?: boolean }): Promise<BookingDetails | null> {
+  return withCache(`booking-details:${bookingId}`, BOOKING_DETAILS_CACHE_TTL_MS, () => measureAsync('bookingService.getBookingDetails', () => loadBookingDetails(bookingId)), options?.forceRefresh);
+}
+
+async function loadBookingDetails(bookingId: string): Promise<BookingDetails | null> {
   const { data, error } = await supabase
-    .from('bookings')
-    .select(
-      'id, hall_id, event_title, event_type, department, faculty_coordinator, start_time, end_time, status, admin_remarks, created_at, updated_at, halls(name, block, floor, capacity, facilities, image_url), approver:approved_by(full_name, email)'
-    )
-    .eq('id', bookingId)
+    .rpc('get_visible_booking_details', { target_booking: bookingId })
     .maybeSingle();
 
   if (error) throw error;
   if (!data) return null;
 
-  const row = data as BookingDetailsRow;
-  const hall = Array.isArray(row.halls) ? row.halls[0] : row.halls;
-  const approver = Array.isArray(row.approver) ? row.approver[0] : row.approver;
+  const row = data as VisibleBookingDetailsRpcRow;
 
   return {
     id: row.id,
     hallId: row.hall_id,
-    requesterId: null,
+    requesterId: row.user_id,
     eventTitle: row.event_title,
     eventType: row.event_type,
     department: row.department,
@@ -279,22 +423,34 @@ export async function getBookingDetails(bookingId: string): Promise<BookingDetai
     endTime: row.end_time,
     status: row.status,
     adminRemarks: row.admin_remarks,
+    revocationReason: row.revocation_reason,
+    revokedAt: row.revoked_at,
+    revokedByName: row.revoked_by_name,
+    revokedByDepartment: row.revoked_by_department,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    hall: hall
+    hall: row.hall_name
       ? {
-          name: hall.name,
-          block: hall.block,
-          floor: hall.floor,
-          capacity: hall.capacity,
-          facilities: hall.facilities ?? [],
-          imageUrl: hall.image_url
+          name: row.hall_name,
+          department: row.hall_department,
+          block: row.hall_block,
+          floor: row.hall_floor,
+          capacity: row.hall_capacity ?? 0,
+          facilities: row.hall_facilities ?? [],
+          imageUrl: row.hall_image_url
         }
       : null,
-    approvedBy: approver
+    approvedBy: row.approver_name || row.approver_email
       ? {
-          fullName: approver.full_name,
-          email: approver.email
+          fullName: row.approver_name ?? 'Approver',
+          email: row.approver_email ?? ''
+        }
+      : null,
+    requester: row.requester_name || row.requester_email || row.requester_department
+      ? {
+          fullName: row.requester_name ?? 'Requester',
+          email: row.requester_email ?? '',
+          department: row.requester_department
         }
       : null
   };
@@ -303,7 +459,7 @@ export async function getBookingDetails(bookingId: string): Promise<BookingDetai
 export async function cancelBooking(bookingId: string): Promise<void> {
   const { data: booking, error: loadError } = await supabase
     .from('bookings')
-    .select('user_id, event_title')
+    .select('user_id, event_title, halls(name, department), profiles:user_id(full_name)')
     .eq('id', bookingId)
     .maybeSingle();
 
@@ -311,15 +467,48 @@ export async function cancelBooking(bookingId: string): Promise<void> {
 
   const { error } = await supabase.from('bookings').update({ status: 'cancelled' }).eq('id', bookingId);
   if (error) throw error;
+  clearBookingCaches(bookingId, booking?.user_id ?? undefined);
 
-  if (booking?.user_id) {
-    await createNotification({
-      userId: booking.user_id,
-      title: 'Booking cancelled',
-      message: `Your booking request "${booking.event_title}" has been cancelled.`,
-      bookingId
-    });
+  if (booking) {
+    await notifyDepartmentAdminsOfBookingCancellation(bookingId, booking as CancelledBookingRow).catch(() => undefined);
   }
+}
+
+type CancelledBookingRow = {
+  user_id: string | null;
+  event_title: string;
+  halls: { name: string | null; department: string | null } | { name: string | null; department: string | null }[] | null;
+  profiles: { full_name: string | null } | { full_name: string | null }[] | null;
+};
+
+async function notifyDepartmentAdminsOfBookingCancellation(bookingId: string, booking: CancelledBookingRow) {
+  const hall = Array.isArray(booking.halls) ? booking.halls[0] : booking.halls;
+  const requester = Array.isArray(booking.profiles) ? booking.profiles[0] : booking.profiles;
+  if (!hall?.department) return;
+
+  const { data: admins, error } = await supabase
+    .from('profiles')
+    .select('id')
+    .eq('role', 'admin')
+    .eq('department', hall.department);
+
+  if (error) throw error;
+
+  await Promise.all(
+    (admins ?? []).map((admin) =>
+      createNotification({
+        userId: admin.id,
+        title: 'Booking cancelled',
+        message: `${requester?.full_name ?? 'A user'} cancelled the booking request for ${hall.name ?? 'the venue'}.`,
+        bookingId,
+        type: 'booking_cancelled',
+        data: {
+          venue_name: hall.name ?? '',
+          event_title: booking.event_title
+        }
+      }).catch(() => undefined)
+    )
+  );
 }
 
 export async function checkBookingOverlap(params: {
@@ -344,23 +533,21 @@ export async function getHallAvailabilityForDate(params: {
   const startOfDay = new Date(`${params.date}T00:00:00`);
   const endOfDay = new Date(`${params.date}T23:59:59.999`);
 
-  const { data, error } = await supabase
-    .from('bookings')
-    .select('id, event_title, status, start_time, end_time')
-    .eq('hall_id', params.hallId)
-    .in('status', ['pending', 'approved'])
-    .lt('start_time', endOfDay.toISOString())
-    .gt('end_time', startOfDay.toISOString())
-    .order('start_time', { ascending: true });
+  const data = await getHallBookedSlotsForRange({
+    hallId: params.hallId,
+    startTime: startOfDay.toISOString(),
+    endTime: endOfDay.toISOString()
+  });
 
-  if (error) throw error;
-
-  return ((data ?? []) as AvailabilityRow[]).map((row) => ({
+  return data.map((row) => ({
     id: row.id,
     eventTitle: row.event_title,
     status: row.status,
     startTime: row.start_time,
-    endTime: row.end_time
+    endTime: row.end_time,
+    requesterName: row.requester_name,
+    requesterDepartment: row.requester_department,
+    hallName: row.hall_name
   }));
 }
 
@@ -383,13 +570,40 @@ export async function getUnavailableHallIdsForSlot(params: {
 export async function getBookingsForDate(params: {
   startOfDay: string;
   endOfDay: string;
+  hallId?: string | null;
 }): Promise<BookingAvailability[]> {
-  const { data, error } = await supabase
+  if (params.hallId) {
+    const data = await getHallBookedSlotsForRange({
+      hallId: params.hallId,
+      startTime: params.startOfDay,
+      endTime: params.endOfDay
+    });
+
+    return data.map((row) => ({
+      id: row.id,
+      hallId: row.hall_id,
+      status: row.status,
+      startTime: row.start_time,
+      endTime: row.end_time,
+      eventTitle: row.event_title,
+      requesterName: row.requester_name,
+      requesterDepartment: row.requester_department,
+      hallName: row.hall_name
+    }));
+  }
+
+  let query = supabase
     .from('bookings')
     .select('id, hall_id, start_time, end_time, status')
     .in('status', ['pending', 'approved'])
     .lt('start_time', params.endOfDay)
     .gt('end_time', params.startOfDay);
+
+  if (params.hallId) {
+    query = query.eq('hall_id', params.hallId);
+  }
+
+  const { data, error } = await query;
 
   if (error) throw error;
 
@@ -399,6 +613,32 @@ export async function getBookingsForDate(params: {
     status: row.status,
     startTime: row.start_time,
     endTime: row.end_time
+  }));
+}
+
+async function getHallBookedSlotsForRange(params: {
+  hallId: string;
+  startTime: string;
+  endTime: string;
+}) {
+  const { data, error } = await supabase.rpc('get_hall_booked_slots_for_range', {
+    p_hall_id: params.hallId,
+    p_start: params.startTime,
+    p_end: params.endTime
+  });
+
+  if (error) throw error;
+
+  return ((data ?? []) as BookedSlotInfoRpcRow[]).map((row) => ({
+    id: row.booking_id,
+    hall_id: row.hall_id,
+    hall_name: row.hall_name,
+    event_title: row.event_title,
+    requester_name: row.requester_name,
+    requester_department: row.requester_department,
+    status: row.status,
+    start_time: row.start_time,
+    end_time: row.end_time
   }));
 }
 
@@ -430,7 +670,7 @@ export async function createBookingRequest(input: CreateBookingInput): Promise<v
   });
 
   if (hasOverlap) {
-    throw new Error('This venue is already booked or awaiting approval for the selected time.');
+    throw new Error(BOOKING_CONFLICT_MESSAGE);
   }
 
   const { data, error } = await supabase
@@ -446,40 +686,35 @@ export async function createBookingRequest(input: CreateBookingInput): Promise<v
       end_time: input.endTime,
       status: 'pending'
     })
-    .select('id, event_title, halls(name)')
+    .select('id, event_title, department, halls(name, department), profiles:user_id(full_name, department)')
     .single();
 
-  if (error) throw error;
+  if (error) {
+    if (isBookingConflictError(error)) {
+      clearBookingCaches(null, input.userId);
+      throw new Error(BOOKING_CONFLICT_MESSAGE);
+    }
+    throw error;
+  }
+  clearBookingCaches(data?.id, input.userId);
   if (data) {
-    await notifyAdminsOfNewBooking(data as CreatedBookingRow).catch(() => undefined);
+    await notifyDepartmentApproverOfNewBooking(data as CreatedBookingRow).catch(() => undefined);
   }
 }
 
-async function notifyAdminsOfNewBooking(booking: CreatedBookingRow) {
-  const hall = Array.isArray(booking.halls) ? booking.halls[0] : booking.halls;
-  const hallName = hall?.name ?? 'a venue';
-  const body = `${booking.event_title} requested for ${hallName}`;
+function clearBookingCaches(bookingId?: string | null, userId?: string | null) {
+  clearCachedValue('bookings:my-department');
+  clearCachedValue('booking-stats:');
+  if (userId) clearCachedValue(`bookings:user:${userId}`);
+  if (bookingId) clearCachedValue(`booking-details:${bookingId}`);
+}
 
-  const { data, error } = await supabase.rpc('create_admin_booking_notifications', {
+async function notifyDepartmentApproverOfNewBooking(booking: CreatedBookingRow) {
+  const { error } = await supabase.rpc('notify_department_approver', {
     booking_to_notify: booking.id
   });
 
   if (error) throw error;
-
-  const recipients = ((data ?? []) as AdminNotificationRecipientRow[]).map((row) => row.user_id);
-  await Promise.all(
-    recipients.map((userId) =>
-      sendPushNotification({
-        userId,
-        title: 'New booking request',
-        body,
-        data: {
-          type: 'new_booking_request',
-          booking_id: booking.id
-        }
-      }).catch(() => undefined)
-    )
-  );
 }
 
 function getLocalDayRange(date = new Date()) {
@@ -490,6 +725,22 @@ function getLocalDayRange(date = new Date()) {
     startIso: start.toISOString(),
     endIso: end.toISOString()
   };
+}
+
+function parseLocalDateKey(dateKey: string) {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  return new Date(year, (month ?? 1) - 1, day ?? 1, 0, 0, 0, 0);
+}
+
+function isBookingConflictError(error: unknown) {
+  if (!error || typeof error !== 'object') return false;
+  const maybeError = error as { code?: string; message?: string; details?: string };
+  const message = `${maybeError.message ?? ''} ${maybeError.details ?? ''}`.toLowerCase();
+
+  return maybeError.code === '23P01'
+    || maybeError.code === '23514'
+    || message.includes('bookings_no_active_overlap')
+    || message.includes('already booked or awaiting approval');
 }
 
 function mapTodayBookedHallRpcRow(row: TodayBookedHallRpcRow): TodayBookedHall {

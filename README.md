@@ -1,6 +1,6 @@
 # VenueVerse
 
-VenueVerse is a college venue booking and approval app for students, staff, admins, and super admins. Students and staff can browse halls, check availability, submit booking requests, track request status, and receive in-app notifications. Administrative users can review requests, approve or reject bookings, manage hall records, and control user roles where permitted.
+VenueVerse is a college venue booking and approval app for users and admins. Users can browse halls, check availability, submit booking requests, track request status, and receive in-app notifications. Admins can review requests, approve or reject bookings, manage hall records, manage users, and control user roles.
 
 ## Tech Stack
 
@@ -19,8 +19,8 @@ VenueVerse is a college venue booking and approval app for students, staff, admi
 ## Features
 
 - Email/password authentication with secure session persistence
-- Super admin account creation with temporary passwords
-- Role-based navigation for users, admins, and super admins
+- Admin account creation with temporary passwords
+- Role-based navigation for users and admins
 - Hall browsing with search, capacity filters, facility filters, and detail screens
 - Venue availability lookup by hall and date
 - Booking request form with validation and database overlap checks
@@ -29,7 +29,7 @@ VenueVerse is a college venue booking and approval app for students, staff, admi
 - Pending request review with approval and rejection workflows
 - Conflict prevention during user booking and admin approval
 - Hall management with active/inactive status and Supabase Storage image uploads
-- Super admin user management and role changes
+- Admin user management and role changes
 - In-app notifications with unread badge and realtime updates
 - Expo push notifications for booking requests, approvals, and rejections
 - Professional institutional UI with shared theme, buttons, inputs, cards, badges, loading, empty, and error states
@@ -39,12 +39,11 @@ VenueVerse is a college venue booking and approval app for students, staff, admi
 | Role | Access |
 | --- | --- |
 | `user` | Browse active halls, check availability, create booking requests, view own bookings, cancel pending bookings, read notifications, edit own profile. |
-| `admin` | Access admin dashboard, review all bookings, approve or reject requests, create notifications, manage halls. |
-| `super_admin` | All admin permissions plus user management and role changes. |
+| `admin` | Access admin dashboard, review all bookings, approve or reject requests, create notifications, manage halls, manage users, create accounts, and update roles. |
 
 ## Account Creation
 
-Accounts are created only by a super admin from the Users tab. Users receive a temporary password and can change it from Profile after signing in.
+Accounts are created only by an admin from the Users tab. Users receive a temporary password and can change it from Profile after signing in.
 
 ## Installation
 
@@ -157,7 +156,7 @@ Expo push tokens require an EAS project ID. After creating/linking the EAS proje
 }
 ```
 
-For reliable phone push testing, use an EAS development build or production build. Expo Go can be useful for partial checks, but final notification behavior should be verified on a real device build.
+For reliable phone push testing, use an EAS development build or production build. Expo Go can be useful for partial checks, but final notification behavior should be verified on a real device build. Expo Go may still show Expo Go branding or skip the final Android notification icon, so treat development builds, APKs, and EAS preview builds as the source of truth for notification branding.
 
 ## Future Enhancements
 

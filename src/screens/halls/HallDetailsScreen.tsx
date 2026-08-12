@@ -4,10 +4,11 @@ import { Image, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { AppButton } from '@/components/AppButton';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorView } from '@/components/ErrorView';
-import { formatLocation } from '@/components/HallCard';
+import { formatVenueDescription } from '@/components/HallCard';
 import { LoadingView } from '@/components/LoadingView';
 import { StatusBadge } from '@/components/StatusBadge';
 import { colors, fontSizes, radius, spacing } from '@/constants/theme';
+import { normalizeVenueType } from '@/constants/venueTypes';
 import { AppStackParamList } from '@/navigation/types';
 import { getHallById } from '@/services/hallService';
 import { Hall } from '@/types/venue';
@@ -44,8 +45,8 @@ export function HallDetailsScreen({ route, navigation }: Props) {
           <Text style={styles.title}>{hall.name}</Text>
           <StatusBadge status={hall.isActive ? 'active' : 'inactive'} />
         </View>
-        <Text style={styles.location}>{hall.department ?? 'Shared venue'} • {hall.venueType ?? 'Venue'}</Text>
-        <Text style={styles.location}>{hall.location || formatLocation(hall.block, hall.floor)}</Text>
+        <Text style={styles.location}>{hall.department ?? 'Shared venue'} • {normalizeVenueType(hall.venueType) || 'Venue'}</Text>
+        <Text style={styles.location}>{formatVenueDescription(hall)}</Text>
         <View style={styles.capacityCard}>
           <Text style={styles.capacityValue}>{hall.capacity}</Text>
           <Text style={styles.capacityLabel}>seating capacity</Text>

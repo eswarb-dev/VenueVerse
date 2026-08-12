@@ -47,9 +47,9 @@ Git history was not available from the current sandboxed working directory durin
 - Added all bookings/history screen with filters.
 - Added requester notifications after approval/rejection.
 
-## Phase 6: Super Admin Management
+## Phase 6: Admin Management
 
-- Added super-admin-gated venue management screens.
+- Added admin-gated venue management screens.
 - Implemented add/edit venue flows.
 - Added hall image upload to Supabase Storage.
 - Added user management and user detail screens.
@@ -84,6 +84,43 @@ Git history was not available from the current sandboxed working directory durin
 - Added storage bucket and storage policies.
 - Added initial seeded venues.
 - Added setup, database, user flow, and testing documentation.
+
+## Phase 10: Receipt PDF Attachment Flow
+
+- Disabled automatic receipt email sending on approval/rejection while preserving manual `Email PDF Copy`.
+- Added manual PDF attachment sending through `send-receipt-pdf-attachment`.
+- Reused shared receipt PDF generation for regeneration fallback.
+- Downloaded existing receipt PDFs from private storage before regenerating.
+- Added PDF validation before sending attachments.
+- Added bounded Gmail SMTP timeout handling and safe failure tracking.
+- Preserved in-app receipt viewer and QR verification behavior.
+- Added receipt email queue processing, cleanup support, and manual send status fields.
+
+## Phase 11: Admin Permissions And User Management
+
+- Added `admin-update-user-role` and `admin-delete-user` Edge Functions.
+- Hardened profile role/department update paths through backend validation.
+- Preserved super admin global management and admin department-scoped management.
+- Added guarded user deletion and role/department update flows.
+- Added rejection reason popup behavior through the shared `RejectReasonDialog`.
+- Updated Super Admin `Manage Users` layout to avoid crowded wrapping filters while keeping the same workflow.
+
+## Phase 12: Android Runtime Fixes
+
+- Fixed receipt QR camera preview rendering on Android.
+- Added Expo Camera native plugin configuration.
+- Added Android notification permission and default notification channel configuration for release APK behavior.
+- Preserved existing in-app notifications, push notifications, and notification routing.
+
+## Phase 13: Performance And Build Packaging
+
+- Added request coalescing in the shared performance cache.
+- Cached profile, user list, notification list, and unread notification queries with safe invalidation.
+- Reduced unnecessary Home dashboard pending-request calls for non-admin users.
+- Memoized high-traffic list cards and stabilized list render callbacks.
+- Added receipt lookup indexes for latest receipt and manual PDF copy queries.
+- Added `.easignore` to reduce EAS archive size by excluding generated/local artifacts.
+- Documented local Android release APK generation with Gradle.
 
 ## Current Status
 

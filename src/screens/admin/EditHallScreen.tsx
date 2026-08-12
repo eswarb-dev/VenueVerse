@@ -6,21 +6,25 @@ import { EmptyState } from '@/components/EmptyState';
 import { ErrorView } from '@/components/ErrorView';
 import { HallForm } from '@/components/HallForm';
 import { LoadingView } from '@/components/LoadingView';
+import { VenueInactiveReasonDialog } from '@/components/VenueInactiveReasonDialog';
 import { colors, spacing } from '@/constants/theme';
-import { AdminStackParamList } from '@/navigation/types';
-import { getHallById, updateHall } from '@/services/hallService';
-import { deleteHall } from '@/services/hallService';
+import { AdminStackParamList, AppStackParamList } from '@/navigation/types';
+import { deleteHall, deleteHallForDepartment, getHallById, updateHall, updateHallForDepartment } from '@/services/hallService';
 import { useAuth } from '@/store/AuthContext';
 import { Hall, HallFormInput } from '@/types/venue';
 
-type Props = NativeStackScreenProps<AdminStackParamList, 'EditHall'>;
+type Props = NativeStackScreenProps<AdminStackParamList & AppStackParamList, 'EditHall'>;
 
 export function EditHallScreen({ route, navigation }: Props) {
-  const { profile } = useAuth();
+  const { profile, user } = useAuth();
   const [hall, setHall] = useState<Hall | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [pendingInactiveInput, setPendingInactiveInput] = useState<HallFormInput | null>(null);
+  const isAdmin = profile?.role === 'admin';
+  const isSuperAdmin = profile?.role === 'super_admin';
+  const userDepartment = profile?.department ?? '';
 
   const loadHall = useCallback(async () => {
     setError('');
@@ -34,17 +38,55 @@ export function EditHallScreen({ route, navigation }: Props) {
       .finally(() => setLoading(false));
   }, [loadHall]);
 
-  const onSubmit = async (input: HallFormInput) => {
+  const saveVenueChanges = async (input: HallFormInput, inactiveReason?: string) => {
     try {
       setSubmitting(true);
-      await updateHall(route.params.hallId, input);
+      const isDeactivating = hall?.isActive === true && input.isActive === false;
+      const isReactivating = hall?.isActive === false && input.isActive === true;
+      const audit = isDeactivating
+        ? { inactiveReason, deactivatedBy: user?.id }
+        : isReactivating
+          ? { reactivatedBy: user?.id }
+          : undefined;
+
+      if (isDeactivating && (!inactiveReason?.trim() || !user?.id)) {
+        throw new Error('Please enter a reason before making this venue inactive.');
+      }
+
+      if (isSuperAdmin) {
+        await updateHall(route.params.hallId, input, audit);
+      } else {
+        if (input.department !== userDepartment) {
+          throw new Error('Department admins can manage venues only in their own department.');
+        }
+        await updateHallForDepartment(route.params.hallId, { ...input, department: userDepartment }, userDepartment, audit);
+      }
+      setPendingInactiveInput(null);
       Alert.alert('Venue updated', 'The venue details have been saved.');
       navigation.goBack();
     } catch (saveError) {
-      Alert.alert('Unable to update venue', saveError instanceof Error ? saveError.message : 'Please try again.');
+      Alert.alert(inactiveReason ? 'Update failed' : 'Unable to update venue', saveError instanceof Error ? saveError.message : 'Please try again.');
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const onSubmit = async (input: HallFormInput) => {
+    if (hall?.isActive === true && input.isActive === false) {
+      setPendingInactiveInput(input);
+      return;
+    }
+
+    await saveVenueChanges(input);
+  };
+
+  const onCancelInactiveReason = () => {
+    setPendingInactiveInput(null);
+  };
+
+  const onConfirmInactiveReason = (reason: string) => {
+    if (!pendingInactiveInput) return;
+    void saveVenueChanges(pendingInactiveInput, reason);
   };
 
   const onDelete = () => {
@@ -56,7 +98,11 @@ export function EditHallScreen({ route, navigation }: Props) {
         onPress: async () => {
           try {
             setSubmitting(true);
-            await deleteHall(route.params.hallId);
+            if (isSuperAdmin) {
+              await deleteHall(route.params.hallId);
+            } else {
+              await deleteHallForDepartment(route.params.hallId, userDepartment);
+            }
             Alert.alert('Venue deleted', 'The venue has been removed.');
             navigation.goBack();
           } catch (deleteError) {
@@ -69,17 +115,39 @@ export function EditHallScreen({ route, navigation }: Props) {
     ]);
   };
 
-  if (profile?.role !== 'super_admin') {
-    return <View style={styles.screen}><EmptyState title="Access denied." message="Only super_admin users can edit venues." /></View>;
+  if (!isSuperAdmin && (!isAdmin || !userDepartment)) {
+    return <View style={styles.screen}><EmptyState title="Access restricted" message="Only admins with an assigned department can manage venues." /></View>;
   }
 
   if (loading) return <LoadingView message="Loading hall details..." />;
   if (error) return <View style={styles.screen}><ErrorView message={error} onRetry={() => void loadHall()} /></View>;
   if (!hall) return <View style={styles.screen}><EmptyState title="Venue not found" message="This venue may no longer exist." /></View>;
+  if (!isSuperAdmin && hall.department !== userDepartment) {
+    return (
+      <View style={styles.screen}>
+        <EmptyState title="Access denied." message="You can manage only venues assigned to your department." />
+      </View>
+    );
+  }
 
   return (
     <ScrollView style={styles.root} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-      <HallForm initialHall={hall} submitLabel="Save Changes" submitting={submitting} onSubmit={onSubmit} />
+      <HallForm
+        initialHall={hall}
+        submitLabel="Save Changes"
+        submitting={submitting}
+        lockedDepartment={isSuperAdmin ? undefined : userDepartment}
+        hideDepartment={!isSuperAdmin}
+        showAdminFields
+        onSubmit={onSubmit}
+      />
+      <VenueInactiveReasonDialog
+        visible={Boolean(pendingInactiveInput)}
+        venueName={hall.name}
+        loading={submitting}
+        onCancel={onCancelInactiveReason}
+        onSubmit={onConfirmInactiveReason}
+      />
       <View style={styles.deleteWrap}>
         <HallFormDeleteButton disabled={submitting} onPress={onDelete} />
       </View>

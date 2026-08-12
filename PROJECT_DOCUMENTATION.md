@@ -1,12 +1,7 @@
-# VenueVerse Documentation
+# VenueVerse Project Documentation
 
-The detailed project audit has been split into focused documentation under [`docs/`](./docs/README.md).
+The maintained project documentation is located at:
 
-## Documentation Index
+[docs/PROJECT_DOCUMENTATION.md](./docs/PROJECT_DOCUMENTATION.md)
 
-- [Project Documentation](./docs/PROJECT_DOCUMENTATION.md): Complete project overview, features, roles, navigation, screens, and statistics.
-- [Supabase Documentation](./docs/SUPABASE_DOCUMENTATION.md): Database tables, RLS, RPCs, triggers, storage, auth, realtime, and setup.
-- [API Reference](./docs/API_REFERENCE.md): Supabase queries, mutations, RPCs, Edge Functions, and notification operations.
-- [Changelog](./docs/CHANGELOG.md): Inferred implementation timeline.
-- [Future Roadmap](./docs/FUTURE_ROADMAP.md): Limitations, planned features, and suggested milestones.
-- [Quick Start](./docs/README.md): Setup, environment variables, run commands, and deployment basics.
+This root file is kept only as a pointer to avoid duplicate/outdated documentation.

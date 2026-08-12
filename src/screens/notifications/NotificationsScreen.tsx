@@ -1,16 +1,23 @@
+import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { formatDistanceToNow } from 'date-fns';
+import { format } from 'date-fns';
 import { Modal, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
-import { useState } from 'react';
+import { memo, useCallback, useState } from 'react';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppButton } from '@/components/AppButton';
+import { AppLogoMark } from '@/components/AppLogoMark';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorView } from '@/components/ErrorView';
 import { LoadingView } from '@/components/LoadingView';
 import { colors, fontSizes, radius, shadows, spacing } from '@/constants/theme';
+import { EXTRA_TAB_PADDING, TOP_SAFE_AREA_PADDING } from '@/constants/layout';
 import { useNotifications } from '@/hooks/useNotifications';
 import { getNotificationBookingDetails, NotificationBookingDetails } from '@/services/notificationService';
 import { AppNotification } from '@/types/notification';
 
 export function NotificationsScreen() {
+  const tabBarHeight = useBottomTabBarHeight();
+  const insets = useSafeAreaInsets();
   const {
     notifications,
     unreadCount,
@@ -26,11 +33,11 @@ export function NotificationsScreen() {
   const [detailsMessage, setDetailsMessage] = useState('');
   const [detailsVisible, setDetailsVisible] = useState(false);
 
-  const onRefresh = async () => {
+  const onRefresh = useCallback(async () => {
     await refresh().catch(() => undefined);
-  };
+  }, [refresh]);
 
-  const onMarkRead = async (notification: AppNotification) => {
+  const onMarkRead = useCallback(async (notification: AppNotification) => {
     await markAsRead(notification.id).catch(() => undefined);
 
     if (!notification.bookingId) {
@@ -55,11 +62,15 @@ export function NotificationsScreen() {
     } finally {
       setDetailsVisible(true);
     }
-  };
+  }, [markAsRead]);
 
-  const onMarkAllRead = async () => {
+  const onMarkAllRead = useCallback(async () => {
     await markAllAsRead().catch(() => undefined);
-  };
+  }, [markAllAsRead]);
+
+  const renderNotification = useCallback(({ item }: { item: AppNotification }) => (
+    <NotificationCard notification={item} disabled={updating} onMarkRead={() => onMarkRead(item)} />
+  ), [onMarkRead, updating]);
 
   if (loading) return <LoadingView message="Loading notifications..." />;
 
@@ -67,7 +78,13 @@ export function NotificationsScreen() {
     <>
       <FlatList
         style={styles.root}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[
+          styles.content,
+          {
+            paddingTop: insets.top + TOP_SAFE_AREA_PADDING,
+            paddingBottom: tabBarHeight + EXTRA_TAB_PADDING
+          }
+        ]}
         data={notifications}
         keyExtractor={(item) => item.id}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
@@ -85,10 +102,8 @@ export function NotificationsScreen() {
             </View>
           </View>
         }
-        ListEmptyComponent={<EmptyState title="No notifications" message="Booking updates and announcements will appear here." />}
-        renderItem={({ item }) => (
-          <NotificationCard notification={item} disabled={updating} onMarkRead={() => onMarkRead(item)} />
-        )}
+        ListEmptyComponent={<NotificationsEmptyState />}
+        renderItem={renderNotification}
       />
       <BookingDetailsModal
         visible={detailsVisible}
@@ -119,7 +134,11 @@ function BookingDetailsModal({
           {details ? (
             <>
               <Detail label="Booked Hall" value={details.bookedHall} />
+              <Detail label="Venue Department" value={details.venueDepartment ?? 'Not set'} />
+              <Detail label="Requester" value={details.requesterName ?? 'Unknown requester'} />
+              <Detail label="Requester Department" value={details.requesterDepartment ?? 'Not set'} />
               <Detail label="Session Name" value={details.sessionName} />
+              <Detail label="Time" value={`${format(new Date(details.startTime), 'dd MMM yyyy, h:mm a')} - ${format(new Date(details.endTime), 'h:mm a')}`} />
             </>
           ) : (
             <Text style={styles.modalMessage}>{message}</Text>
@@ -131,16 +150,16 @@ function BookingDetailsModal({
   );
 }
 
-function Detail({ label, value }: { label: string; value: string }) {
+const Detail = memo(function Detail({ label, value }: { label: string; value: string }) {
   return (
     <View style={styles.detail}>
       <Text style={styles.detailLabel}>{label}</Text>
       <Text style={styles.detailValue}>{value}</Text>
     </View>
   );
-}
+});
 
-function NotificationCard({
+const NotificationCard = memo(function NotificationCard({
   notification,
   disabled,
   onMarkRead
@@ -164,6 +183,15 @@ function NotificationCard({
       </Pressable>
     </View>
   );
+});
+
+function NotificationsEmptyState() {
+  return (
+    <View style={styles.emptyState}>
+      <AppLogoMark size={58} />
+      <EmptyState title="No notifications" message="Booking updates and announcements will appear here." />
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
@@ -176,6 +204,10 @@ const styles = StyleSheet.create({
     gap: spacing.md
   },
   header: {
+    gap: spacing.md
+  },
+  emptyState: {
+    alignItems: 'center',
     gap: spacing.md
   },
   summary: {
@@ -265,7 +297,7 @@ const styles = StyleSheet.create({
   modalBackdrop: {
     flex: 1,
     justifyContent: 'center',
-    backgroundColor: 'rgba(7, 43, 76, 0.45)',
+    backgroundColor: colors.overlayStrong,
     padding: spacing.lg
   },
   modalCard: {

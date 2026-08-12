@@ -93,7 +93,7 @@ export function ChangePasswordScreen({ navigation }: Props) {
           setCurrentPassword(value);
           setErrors((current) => ({ ...current, currentPassword: undefined }));
         }}
-        secureTextEntry
+        isPassword
         autoCapitalize="none"
         error={errors.currentPassword}
       />
@@ -104,7 +104,7 @@ export function ChangePasswordScreen({ navigation }: Props) {
           setNewPassword(value);
           setErrors((current) => ({ ...current, newPassword: undefined }));
         }}
-        secureTextEntry
+        isPassword
         autoCapitalize="none"
         error={errors.newPassword}
       />
@@ -115,7 +115,7 @@ export function ChangePasswordScreen({ navigation }: Props) {
           setConfirmPassword(value);
           setErrors((current) => ({ ...current, confirmPassword: undefined }));
         }}
-        secureTextEntry
+        isPassword
         autoCapitalize="none"
         error={errors.confirmPassword}
       />

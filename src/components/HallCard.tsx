@@ -1,6 +1,8 @@
+import { memo } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { StatusBadge } from '@/components/StatusBadge';
 import { colors, fontSizes, radius, shadows, spacing } from '@/constants/theme';
+import { normalizeVenueType } from '@/constants/venueTypes';
 import { Hall } from '@/types/venue';
 
 type HallCardProps = {
@@ -8,7 +10,9 @@ type HallCardProps = {
   onPress?: () => void;
 };
 
-export function HallCard({ hall, onPress }: HallCardProps) {
+export const HallCard = memo(function HallCard({ hall, onPress }: HallCardProps) {
+  const locationText = formatVenueDescription(hall);
+
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.card, pressed && onPress ? styles.pressed : null]}>
       {hall.imageUrl ? <Image source={{ uri: hall.imageUrl }} style={styles.image} /> : <View style={styles.imagePlaceholder} />}
@@ -17,8 +21,9 @@ export function HallCard({ hall, onPress }: HallCardProps) {
           <Text style={styles.name}>{hall.name}</Text>
           <StatusBadge status={hall.isActive ? 'active' : 'inactive'} />
         </View>
-        <Text style={styles.meta}>{hall.department ?? 'Shared venue'} • {hall.venueType ?? 'Venue'}</Text>
-        <Text style={styles.meta}>{hall.location || formatLocation(hall.block, hall.floor)}</Text>
+        <Text style={styles.meta}>{hall.department ?? 'Shared venue'} • {normalizeVenueType(hall.venueType) || 'Venue'}</Text>
+        <Text style={styles.meta}>{locationText}</Text>
+        {!hall.isActive && hall.inactiveReason ? <Text style={styles.reason}>Reason: {hall.inactiveReason}</Text> : null}
         <Text style={styles.capacity}>{hall.capacity} seats</Text>
         <View style={styles.chips}>
           {hall.facilities.slice(0, 4).map((facility) => (
@@ -29,10 +34,37 @@ export function HallCard({ hall, onPress }: HallCardProps) {
       </View>
     </Pressable>
   );
-}
+});
 
 export function formatLocation(block: string | null, floor: string | null) {
-  return [block, floor].filter(Boolean).join(' / ') || 'Campus venue';
+  const blockLabel = block?.trim() ? `${block.trim()} - Block` : '';
+  const floorLabel = floor?.trim() ? `${floor.trim()} Floor` : '';
+
+  return [blockLabel, floorLabel].filter(Boolean).join(', ') || 'Campus venue';
+}
+
+export function formatVenueDescription(hall: Pick<Hall, 'block' | 'floor' | 'location' | 'department'>) {
+  const blockFloor = formatLocation(hall.block, hall.floor);
+  if (blockFloor !== 'Campus venue') return blockFloor;
+
+  const location = hall.location?.trim();
+  if (!location || isDuplicateDepartmentLocation(location, hall.department)) return 'Campus venue';
+  return location;
+}
+
+function isDuplicateDepartmentLocation(location: string, department?: string | null) {
+  const normalizedLocation = normalizeLocationText(location);
+  const normalizedDepartment = normalizeLocationText(department ?? '');
+  return Boolean(
+    normalizedDepartment &&
+    (normalizedLocation === normalizedDepartment ||
+      normalizedLocation === `${normalizedDepartment}department` ||
+      normalizedLocation === `${normalizedDepartment}dept`)
+  );
+}
+
+function normalizeLocationText(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9&]/g, '');
 }
 
 const styles = StyleSheet.create({
@@ -77,6 +109,11 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontSize: fontSizes.sm,
     fontWeight: '700'
+  },
+  reason: {
+    color: colors.textMuted,
+    fontSize: fontSizes.sm,
+    fontWeight: '800'
   },
   capacity: {
     color: colors.primary,

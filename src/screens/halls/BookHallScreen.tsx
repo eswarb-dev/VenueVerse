@@ -1,14 +1,15 @@
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { format } from 'date-fns';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { AppButton } from '@/components/AppButton';
 import { AppTextInput } from '@/components/AppTextInput';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorView } from '@/components/ErrorView';
-import { formatLocation } from '@/components/HallCard';
+import { formatVenueDescription } from '@/components/HallCard';
 import { LoadingView } from '@/components/LoadingView';
 import { colors, fontSizes, radius, spacing } from '@/constants/theme';
+import { normalizeVenueType } from '@/constants/venueTypes';
 import { AppStackParamList } from '@/navigation/types';
 import { createBookingRequest } from '@/services/bookingService';
 import { getHallById } from '@/services/hallService';
@@ -33,6 +34,8 @@ const initialForm: FormState = {
   facultyCoordinator: ''
 };
 
+const PASSED_SLOT_ERROR = 'Selected time slot has already passed';
+
 export function BookHallScreen({ route, navigation }: Props) {
   const { profile, user } = useAuth();
   const [hall, setHall] = useState<Hall | null>(null);
@@ -44,6 +47,8 @@ export function BookHallScreen({ route, navigation }: Props) {
   const [loadingHall, setLoadingHall] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [loadError, setLoadError] = useState('');
+  const hasShownPassedSlotPopupRef = useRef(false);
+  const passedSlotErrorActive = errors.form === PASSED_SLOT_ERROR;
 
   const loadHall = useCallback(async () => {
     setLoadError('');
@@ -76,15 +81,43 @@ export function BookHallScreen({ route, navigation }: Props) {
     if (Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime()) || endAt <= startAt) {
       nextErrors.form = 'Please select a valid time slot';
     } else if (startAt <= new Date()) {
-      nextErrors.form = 'Selected time slot has already passed';
+      nextErrors.form = PASSED_SLOT_ERROR;
     }
 
     return nextErrors;
   };
 
+  const showPassedSlotPopup = useCallback(() => {
+    if (hasShownPassedSlotPopupRef.current) return;
+
+    hasShownPassedSlotPopupRef.current = true;
+    Alert.alert(
+      'Time Slot Passed',
+      'This selected time slot has already passed. Please choose another available slot.',
+      [
+        {
+          text: 'Choose Another Slot',
+          onPress: () => {
+            if (navigation.canGoBack()) navigation.goBack();
+          }
+        }
+      ],
+      { cancelable: false }
+    );
+  }, [navigation]);
+
+  useEffect(() => {
+    const validation = validate();
+    if (validation.form === PASSED_SLOT_ERROR) {
+      setErrors((current) => ({ ...current, form: PASSED_SLOT_ERROR }));
+      showPassedSlotPopup();
+    }
+  }, [route.params.startTime, route.params.endTime, showPassedSlotPopup]);
+
   const onSubmit = async () => {
     const nextErrors = validate();
     setErrors(nextErrors);
+    if (nextErrors.form === PASSED_SLOT_ERROR) showPassedSlotPopup();
     if (Object.keys(nextErrors).length > 0 || !hall) return;
 
     const currentUserId = profile?.id ?? user?.id;
@@ -123,7 +156,7 @@ export function BookHallScreen({ route, navigation }: Props) {
 
   return (
     <ScrollView style={styles.root} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-      {errors.form ? <Text style={styles.formError}>{errors.form}</Text> : null}
+      {errors.form && !passedSlotErrorActive ? <Text style={styles.formError}>{errors.form}</Text> : null}
 
       <AppTextInput label="Event title" value={form.eventTitle} onChangeText={update('eventTitle')} error={errors.eventTitle} />
       <AppTextInput label="Event type" value={form.eventType} onChangeText={update('eventType')} placeholder="Seminar, workshop, meeting" />
@@ -136,11 +169,11 @@ export function BookHallScreen({ route, navigation }: Props) {
         <SummaryRow label="Date" value={format(new Date(route.params.startTime), 'EEEE, dd MMMM yyyy')} />
         <SummaryRow label="Time" value={route.params.slotLabel} />
         <SummaryRow label="Department" value={(hall.department ?? form.department) || 'Not provided'} />
-        <SummaryRow label="Venue type" value={hall.venueType ?? 'Venue'} />
-        <SummaryRow label="Location" value={hall.location || formatLocation(hall.block, hall.floor)} />
+        <SummaryRow label="Venue type" value={normalizeVenueType(hall.venueType) || 'Venue'} />
+        <SummaryRow label="Location" value={formatVenueDescription(hall)} />
       </View>
 
-      <AppButton title="Submit Booking Request" loading={submitting} disabled={submitting} onPress={onSubmit} />
+      <AppButton title="Submit Booking Request" loading={submitting} disabled={submitting || passedSlotErrorActive} onPress={onSubmit} />
     </ScrollView>
   );
 }

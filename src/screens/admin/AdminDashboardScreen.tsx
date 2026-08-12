@@ -1,42 +1,82 @@
+import { CompositeScreenProps, useFocusEffect } from '@react-navigation/native';
+import { BottomTabScreenProps, useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { useCallback, useEffect, useState } from 'react';
-import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useRef, useState } from 'react';
+import { Alert, BackHandler, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { AppLogoMark } from '@/components/AppLogoMark';
 import { ErrorView } from '@/components/ErrorView';
 import { LoadingView } from '@/components/LoadingView';
-import { colors, fontSizes, radius, shadows, spacing } from '@/constants/theme';
-import { AdminStackParamList } from '@/navigation/types';
+import { colors, fontSizes, radius, spacing } from '@/constants/theme';
+import { EXTRA_TAB_PADDING, TOP_SAFE_AREA_PADDING } from '@/constants/layout';
+import { AdminStackParamList, AdminTabParamList } from '@/navigation/types';
 import { getAdminDashboardStats } from '@/services/adminService';
 import { useAuth } from '@/store/AuthContext';
 import { AdminDashboardStats } from '@/types/venue';
 
-type Props = NativeStackScreenProps<AdminStackParamList, 'AdminDashboard'>;
+type Props = CompositeScreenProps<
+  BottomTabScreenProps<AdminTabParamList, 'Dashboard'>,
+  NativeStackScreenProps<AdminStackParamList>
+>;
 
 export function AdminDashboardScreen({ navigation }: Props) {
+  const tabBarHeight = useBottomTabBarHeight();
+  const insets = useSafeAreaInsets();
   const { profile, logout } = useAuth();
   const [stats, setStats] = useState<AdminDashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const hasFocusedOnce = useRef(false);
   const role = profile?.role;
+  const isAdmin = role === 'admin';
   const isSuperAdmin = role === 'super_admin';
-  const canAccessAdminDashboard = role === 'admin' || role === 'super_admin';
+  const canAccessAdminDashboard = isAdmin || isSuperAdmin;
 
-  const loadStats = useCallback(async () => {
+  const goBackToHome = useCallback(() => {
+    const adminTabs = navigation.getParent();
+    const appStack = adminTabs?.getParent();
+
+    if (appStack?.canGoBack()) {
+      appStack.goBack();
+      return;
+    }
+
+    adminTabs?.goBack();
+  }, [navigation]);
+
+  const loadStats = useCallback(async (forceRefresh = false) => {
     setError('');
-    setStats(await getAdminDashboardStats());
-  }, []);
+    setStats(await getAdminDashboardStats(profile, { forceRefresh }));
+  }, [profile]);
 
-  useEffect(() => {
-    setLoading(true);
-    loadStats()
-      .catch((loadError) => setError(loadError instanceof Error ? loadError.message : 'Unable to load admin dashboard.'))
-      .finally(() => setLoading(false));
-  }, [loadStats]);
+  useFocusEffect(
+    useCallback(() => {
+      const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+        goBackToHome();
+        return true;
+      });
+
+      return () => subscription.remove();
+    }, [goBackToHome])
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      setLoading(!hasFocusedOnce.current);
+      loadStats()
+        .catch((loadError) => setError(loadError instanceof Error ? loadError.message : 'Unable to refresh admin dashboard.'))
+        .finally(() => {
+          hasFocusedOnce.current = true;
+          setLoading(false);
+        });
+    }, [loadStats])
+  );
 
   const onRefresh = async () => {
     setRefreshing(true);
     try {
-      await loadStats();
+      await loadStats(true);
     } catch (refreshError) {
       setError(refreshError instanceof Error ? refreshError.message : 'Unable to refresh dashboard.');
     } finally {
@@ -65,28 +105,44 @@ export function AdminDashboardScreen({ navigation }: Props) {
   return (
     <ScrollView
       style={styles.root}
-      contentContainerStyle={styles.content}
+      contentContainerStyle={[
+        styles.content,
+        {
+          paddingTop: insets.top + TOP_SAFE_AREA_PADDING,
+          paddingBottom: tabBarHeight + EXTRA_TAB_PADDING
+        }
+      ]}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
     >
+      <Pressable accessibilityRole="button" onPress={goBackToHome} style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}>
+        <Text style={styles.backButtonText}>‹ Back to Home</Text>
+      </Pressable>
+
       <View style={styles.header}>
-        <Text style={styles.eyebrow}>Administration</Text>
-        <Text style={styles.title}>Venue Operations</Text>
-        <Text style={styles.subtitle}>{profile?.fullName ?? 'Admin'} • {formatRole(role)}</Text>
+        <View style={styles.headerRow}>
+          <View style={styles.headerCopy}>
+            <Text style={styles.eyebrow}>{isSuperAdmin ? 'Super Admin Console' : 'Administration'}</Text>
+            <Text style={styles.title}>{isSuperAdmin ? 'Global Admin Dashboard' : `${profile?.department ?? 'Department'} Admin Dashboard`}</Text>
+            <Text style={styles.subtitle}>{profile?.fullName ?? 'Admin'} • {formatRole(role)}</Text>
+          </View>
+          <AppLogoMark size={46} />
+        </View>
       </View>
 
       {error ? <ErrorView message={error} onRetry={() => void onRefresh()} /> : null}
 
       <SectionTitle title="Overview" />
       <View style={styles.statsGrid}>
-        <AdminStatCard label="Pending Requests" value={stats?.pending ?? 0} accentColor="#D97706" onPress={() => navigation.navigate('PendingRequests')} />
-        <AdminStatCard label="Approved Bookings" value={stats?.approved ?? 0} accentColor={colors.status.approved} onPress={() => navigation.navigate('AllBookings', { status: 'approved' })} />
-        <AdminStatCard label="Rejected Bookings" value={stats?.rejected ?? 0} accentColor={colors.status.rejected} onPress={() => navigation.navigate('AllBookings', { status: 'rejected' })} />
+        <AdminStatCard label="Pending Requests" value={stats?.pending ?? 0} accentColor={colors.warning} onPress={() => navigation.navigate('Requests')} />
+        <AdminStatCard label="Approved Bookings" value={stats?.approved ?? 0} accentColor={colors.success} onPress={() => navigation.navigate('Bookings', { status: 'approved' })} />
+        <AdminStatCard label="Rejected Bookings" value={stats?.rejected ?? 0} accentColor={colors.danger} onPress={() => navigation.navigate('Bookings', { status: 'rejected' })} />
+        <AdminStatCard label="Revoked Bookings" value={stats?.revoked ?? 0} accentColor={colors.status.revoked} onPress={() => navigation.navigate('Bookings', { status: 'revoked' })} />
         <AdminStatCard
-          label="Active Halls"
+          label={isSuperAdmin ? 'Active Halls' : 'Active Department Halls'}
           value={stats?.activeHalls ?? 0}
           accentColor={colors.primary}
-          disabled={!isSuperAdmin}
-          onPress={() => navigation.navigate('ManageHalls', { isActive: true })}
+          disabled={!canAccessAdminDashboard}
+          onPress={() => navigation.navigate('Venues', { isActive: true })}
         />
       </View>
 
@@ -96,13 +152,13 @@ export function AdminDashboardScreen({ navigation }: Props) {
           title="Pending Requests"
           subtitle="Review booking approvals"
           badge={stats?.pending ? String(stats.pending) : undefined}
-          onPress={() => navigation.navigate('PendingRequests')}
+          onPress={() => navigation.navigate('Requests')}
         />
-        {isSuperAdmin ? (
-          <AdminActionCard title="Manage Venues" subtitle="Add or edit halls/labs" onPress={() => navigation.navigate('ManageHalls')} />
+        {canAccessAdminDashboard ? (
+          <AdminActionCard title="Manage Venues" subtitle={isSuperAdmin ? 'Add or edit halls/labs across departments' : `Add or edit ${profile?.department ?? 'department'} halls/labs`} onPress={() => navigation.navigate('Venues')} />
         ) : null}
-        <AdminActionCard title="All Bookings" subtitle="View booking history" onPress={() => navigation.navigate('AllBookings')} />
-        {isSuperAdmin ? (
+        <AdminActionCard title="All Bookings" subtitle={isSuperAdmin ? 'View global booking history' : 'View department venue history'} onPress={() => navigation.navigate('Bookings')} />
+        {canAccessAdminDashboard ? (
           <AdminActionCard title="Users" subtitle="Manage roles and accounts" onPress={() => navigation.navigate('Users')} />
         ) : null}
       </View>
@@ -215,26 +271,53 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
     textAlign: 'center'
   },
+  backButton: {
+    alignSelf: 'flex-start',
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm
+  },
+  backButtonText: {
+    color: colors.primary,
+    fontSize: fontSizes.sm,
+    fontWeight: '900'
+  },
   header: {
-    backgroundColor: colors.primaryDark,
-    borderRadius: radius.xl,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderLeftWidth: 4,
+    borderColor: colors.borderSoft,
+    borderLeftColor: colors.primary,
+    borderRadius: radius.lg,
     padding: 20,
-    gap: spacing.xs,
-    ...shadows.card
+    gap: spacing.xs
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md
+  },
+  headerCopy: {
+    flex: 1,
+    gap: spacing.xs
   },
   eyebrow: {
-    color: colors.onPrimaryMuted,
+    color: colors.primary,
     fontSize: fontSizes.xs,
     fontWeight: '900',
     textTransform: 'uppercase'
   },
   title: {
-    color: colors.surface,
+    color: colors.text,
     fontSize: fontSizes.xl,
     fontWeight: '900'
   },
   subtitle: {
-    color: colors.onPrimarySubtle,
+    color: colors.textMuted,
     fontSize: fontSizes.sm,
     fontWeight: '700'
   },
@@ -257,8 +340,7 @@ const styles = StyleSheet.create({
     borderColor: colors.borderSoft,
     borderRadius: radius.lg,
     padding: spacing.md,
-    justifyContent: 'space-between',
-    ...shadows.card
+    justifyContent: 'space-between'
   },
   statAccent: {
     width: 34,
@@ -302,8 +384,7 @@ const styles = StyleSheet.create({
     borderColor: colors.borderSoft,
     borderRadius: radius.lg,
     padding: spacing.md,
-    justifyContent: 'space-between',
-    ...shadows.card
+    justifyContent: 'space-between'
   },
   actionHeader: {
     flexDirection: 'row',

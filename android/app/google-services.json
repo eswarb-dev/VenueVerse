@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "89306177147",
+    "project_id": "venueverse-987ba",
+    "storage_bucket": "venueverse-987ba.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:89306177147:android:78229ecf338af1006cccde",
+        "android_client_info": {
+          "package_name": "com.srec.aids.venueverse"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCYcEEfzwLIplYqDlaPmHGFVUmzKPntqyk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

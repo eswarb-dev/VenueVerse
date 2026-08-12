@@ -4,8 +4,9 @@ import { Alert, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { AppButton } from '@/components/AppButton';
 import { AppTextInput } from '@/components/AppTextInput';
 import { FACILITY_OPTIONS } from '@/constants/facilities';
-import { DEPARTMENT_OPTIONS, VENUE_TYPE_OPTIONS } from '@/constants/departments';
+import { ACADEMIC_DEPARTMENTS, DEPARTMENT_OPTIONS } from '@/constants/departments';
 import { colors, fontSizes, radius, spacing } from '@/constants/theme';
+import { normalizeVenueType, VENUE_TYPES } from '@/constants/venueTypes';
 import { uploadHallImage } from '@/services/hallService';
 import { Hall, HallFormInput } from '@/types/venue';
 
@@ -14,6 +15,9 @@ type HallFormProps = {
   submitLabel: string;
   submitting: boolean;
   onSubmit: (input: HallFormInput) => Promise<void>;
+  lockedDepartment?: string;
+  hideDepartment?: boolean;
+  showAdminFields?: boolean;
 };
 
 type FormState = {
@@ -29,26 +33,37 @@ type FormState = {
   isActive: boolean;
 };
 
-type FormErrors = Partial<Record<'name' | 'department' | 'venueType' | 'location' | 'capacity', string>>;
+type FormErrors = Partial<Record<'name' | 'department' | 'venueType' | 'capacity', string>>;
 
-export function HallForm({ initialHall, submitLabel, submitting, onSubmit }: HallFormProps) {
+export function HallForm({
+  initialHall,
+  submitLabel,
+  submitting,
+  onSubmit,
+  lockedDepartment,
+  hideDepartment,
+  showAdminFields = true
+}: HallFormProps) {
+  const initialDepartment = lockedDepartment ?? initialHall?.department ?? '';
+  const initialVenueType = normalizeVenueType(initialHall?.venueType);
   const [form, setForm] = useState<FormState>({
     name: initialHall?.name ?? '',
-    department: initialHall?.department ?? '',
-    venueType: initialHall?.venueType ?? '',
+    department: initialDepartment,
+    venueType: initialVenueType,
     location: initialHall?.location ?? '',
     block: initialHall?.block ?? '',
     floor: initialHall?.floor ?? '',
     capacity: initialHall?.capacity?.toString() ?? '',
-    facilities: initialHall?.facilities ?? [],
+    facilities: normalizeFacilities(initialHall?.facilities),
     imageUrl: initialHall?.imageUrl ?? null,
     isActive: initialHall?.isActive ?? true
   });
   const [errors, setErrors] = useState<FormErrors>({});
   const [uploading, setUploading] = useState(false);
+  const venueTypeOptions = getFormVenueTypeOptions(form.venueType, form.department);
 
   const update = (key: keyof FormState) => (value: string) => {
-    setForm((current) => ({ ...current, [key]: value }));
+    setForm((current) => ({ ...current, [key]: key === 'venueType' ? normalizeVenueType(value) : value }));
     setErrors((current) => ({ ...current, [key]: undefined }));
   };
 
@@ -61,28 +76,58 @@ export function HallForm({ initialHall, submitLabel, submitting, onSubmit }: Hal
     }));
   };
 
-  const pickImage = async () => {
+  const showImagePicker = () => {
+    Alert.alert('Hall Image', 'Choose how you want to add the venue image.', [
+      { text: 'Take Photo', onPress: () => void takePhoto() },
+      { text: 'Choose from Gallery', onPress: () => void chooseFromGallery() },
+      { text: 'Cancel', style: 'cancel' }
+    ]);
+  };
+
+  const takePhoto = async () => {
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Camera permission required', 'Please allow camera access to take a venue photo.');
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: 0.75
+    });
+
+    await uploadSelectedImage(result);
+  };
+
+  const chooseFromGallery = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
-      Alert.alert('Permission required', 'Media library access is required to upload a hall image.');
+      Alert.alert('Permission required', 'Please allow photo access to upload a venue image.');
       return;
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
-      quality: 0.85
+      quality: 0.75
     });
 
+    await uploadSelectedImage(result);
+  };
+
+  const uploadSelectedImage = async (result: ImagePicker.ImagePickerResult) => {
     if (result.canceled) return;
 
     const asset = result.assets[0];
+    if (!asset?.uri) return;
+
     try {
       setUploading(true);
-      const publicUrl = await uploadHallImage(asset.uri, asset.fileName ?? 'hall-image.jpg');
+      const publicUrl = await uploadHallImage(asset.uri, asset.fileName ?? 'hall-image.jpg', asset.mimeType);
       setForm((current) => ({ ...current, imageUrl: publicUrl }));
     } catch (error) {
-      Alert.alert('Upload failed', error instanceof Error ? error.message : 'Unable to upload hall image.');
+      Alert.alert('Image upload failed', 'Couldn’t upload the venue image. Please check your connection and try again.');
     } finally {
       setUploading(false);
     }
@@ -95,7 +140,6 @@ export function HallForm({ initialHall, submitLabel, submitting, onSubmit }: Hal
     if (!form.name.trim()) nextErrors.name = 'Hall name is required.';
     if (!form.department.trim()) nextErrors.department = 'Department is required.';
     if (!form.venueType.trim()) nextErrors.venueType = 'Venue type is required.';
-    if (!form.location.trim()) nextErrors.location = 'Location is required.';
     if (!form.capacity.trim()) {
       nextErrors.capacity = 'Capacity is required.';
     } else if (!Number.isFinite(capacity) || capacity <= 0) {
@@ -112,13 +156,13 @@ export function HallForm({ initialHall, submitLabel, submitting, onSubmit }: Hal
 
     await onSubmit({
       name: form.name,
-      department: form.department,
-      venueType: form.venueType,
+      department: lockedDepartment ?? form.department,
+      venueType: normalizeVenueType(form.venueType),
       location: form.location,
       block: form.block,
       floor: form.floor,
       capacity: Number(form.capacity),
-      facilities: form.facilities,
+      facilities: normalizeFacilities(form.facilities),
       imageUrl: form.imageUrl,
       isActive: form.isActive
     });
@@ -127,23 +171,33 @@ export function HallForm({ initialHall, submitLabel, submitting, onSubmit }: Hal
   return (
     <View style={styles.wrap}>
       <AppTextInput label="Hall name" value={form.name} onChangeText={update('name')} error={errors.name} />
-      <SelectorSection
-        title="Department"
-        options={DEPARTMENT_OPTIONS}
-        value={form.department}
-        error={errors.department}
-        onSelect={(department) => update('department')(department)}
-      />
+      {hideDepartment ? (
+        <View style={styles.selector}>
+          <Text style={styles.sectionTitle}>Department</Text>
+          <Text style={styles.lockedText}>{form.department || 'Not assigned'}</Text>
+        </View>
+      ) : (
+        <SelectorSection
+          title="Department"
+          options={DEPARTMENT_OPTIONS}
+          value={form.department}
+          error={errors.department}
+          onSelect={(department) => update('department')(department)}
+        />
+      )}
       <SelectorSection
         title="Venue type"
-        options={VENUE_TYPE_OPTIONS}
+        options={venueTypeOptions}
         value={form.venueType}
         error={errors.venueType}
         onSelect={(venueType) => update('venueType')(venueType)}
       />
-      <AppTextInput label="Location" value={form.location} onChangeText={update('location')} error={errors.location} placeholder="Block, floor, campus landmark" />
-      <AppTextInput label="Block" value={form.block} onChangeText={update('block')} />
-      <AppTextInput label="Floor" value={form.floor} onChangeText={update('floor')} />
+      {showAdminFields ? (
+        <>
+          <AppTextInput label="Block" value={form.block} onChangeText={update('block')} />
+          <AppTextInput label="Floor" value={form.floor} onChangeText={update('floor')} />
+        </>
+      ) : null}
       <AppTextInput label="Capacity" value={form.capacity} onChangeText={update('capacity')} keyboardType="number-pad" error={errors.capacity} />
 
       <View style={styles.section}>
@@ -161,11 +215,13 @@ export function HallForm({ initialHall, submitLabel, submitting, onSubmit }: Hal
         </View>
       </View>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Hall image</Text>
-        {form.imageUrl ? <Image source={{ uri: form.imageUrl }} style={styles.image} /> : <View style={styles.imagePlaceholder} />}
-        <AppButton title={uploading ? 'Uploading...' : 'Upload Image'} variant="secondary" loading={uploading} disabled={uploading} onPress={pickImage} />
-      </View>
+      {showAdminFields ? (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Hall image</Text>
+          {form.imageUrl ? <Image source={{ uri: form.imageUrl }} style={styles.image} /> : <View style={styles.imagePlaceholder} />}
+          <AppButton title={uploading ? 'Uploading...' : 'Upload Image'} variant="secondary" loading={uploading} disabled={uploading} onPress={showImagePicker} />
+        </View>
+      ) : null}
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Active status</Text>
@@ -182,6 +238,26 @@ export function HallForm({ initialHall, submitLabel, submitting, onSubmit }: Hal
       <AppButton title={submitLabel} loading={submitting} disabled={submitting || uploading} onPress={handleSubmit} />
     </View>
   );
+}
+
+function getFormVenueTypeOptions(value: string, department: string) {
+  const normalizedValue = normalizeVenueType(value);
+  const baseOptions = getVenueTypesForDepartment(department);
+  if (normalizedValue && !baseOptions.includes(normalizedValue as (typeof baseOptions)[number])) {
+    return [...baseOptions, `Existing: ${normalizedValue}`];
+  }
+  return [...baseOptions];
+}
+
+function getVenueTypesForDepartment(department: string) {
+  if (!ACADEMIC_DEPARTMENTS.includes(department)) return VENUE_TYPES;
+
+  return VENUE_TYPES.filter((type) => !['Open Hall', 'Auditorium', 'Dining Hall'].includes(type));
+}
+
+function normalizeFacilities(facilities?: string[] | null) {
+  const allowedFacilities = new Set<string>(FACILITY_OPTIONS);
+  return Array.from(new Set((facilities ?? []).filter((facility) => allowedFacilities.has(facility))));
 }
 
 function SelectorSection({
@@ -202,9 +278,10 @@ function SelectorSection({
       <Text style={styles.sectionTitle}>{title}</Text>
       <View style={styles.chips}>
         {options.map((option) => {
-          const active = value === option;
+          const optionValue = option.replace(/^Existing: /, '');
+          const active = value === optionValue;
           return (
-            <Pressable key={option} onPress={() => onSelect(option)} style={[styles.chip, active && styles.chipActive]}>
+            <Pressable key={option} onPress={() => onSelect(optionValue)} style={[styles.chip, active && styles.chipActive]}>
               <Text style={[styles.chipText, active && styles.chipTextActive]}>{option}</Text>
             </Pressable>
           );
@@ -244,6 +321,11 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontSize: fontSizes.sm,
     fontWeight: '600'
+  },
+  lockedText: {
+    color: colors.primary,
+    fontSize: fontSizes.md,
+    fontWeight: '900'
   },
   chips: {
     flexDirection: 'row',

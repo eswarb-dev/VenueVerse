@@ -1,29 +1,40 @@
+import { CompositeScreenProps, useFocusEffect } from '@react-navigation/native';
+import { BottomTabScreenProps, useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { useFocusEffect } from '@react-navigation/native';
 import { format } from 'date-fns';
-import { useCallback, useState } from 'react';
+import { memo, useCallback, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorView } from '@/components/ErrorView';
 import { LoadingView } from '@/components/LoadingView';
 import { StatusBadge } from '@/components/StatusBadge';
 import { colors, fontSizes, radius, spacing } from '@/constants/theme';
-import { AdminStackParamList } from '@/navigation/types';
+import { EXTRA_TAB_PADDING, TOP_SAFE_AREA_PADDING } from '@/constants/layout';
+import { AdminStackParamList, AdminTabParamList } from '@/navigation/types';
 import { getPendingRequests } from '@/services/adminService';
+import { useAuth } from '@/store/AuthContext';
 import { AdminBookingSummary } from '@/types/venue';
 
-type Props = NativeStackScreenProps<AdminStackParamList, 'PendingRequests'>;
+type Props = CompositeScreenProps<
+  BottomTabScreenProps<AdminTabParamList, 'Requests'>,
+  NativeStackScreenProps<AdminStackParamList>
+>;
 
 export function PendingRequestsScreen({ navigation }: Props) {
+  const tabBarHeight = useBottomTabBarHeight();
+  const insets = useSafeAreaInsets();
+  const { profile } = useAuth();
   const [bookings, setBookings] = useState<AdminBookingSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
 
-  const loadRequests = useCallback(async () => {
+  const loadRequests = useCallback(async (forceRefresh = false) => {
     setError('');
-    setBookings(await getPendingRequests());
-  }, []);
+    setBookings(await getPendingRequests(profile, { forceRefresh }));
+  }, [profile]);
+  const isSuperAdmin = profile?.role === 'super_admin';
 
   useFocusEffect(
     useCallback(() => {
@@ -37,7 +48,7 @@ export function PendingRequestsScreen({ navigation }: Props) {
   const onRefresh = async () => {
     setRefreshing(true);
     try {
-      await loadRequests();
+      await loadRequests(true);
     } catch (refreshError) {
       setError(refreshError instanceof Error ? refreshError.message : 'Unable to refresh pending requests.');
     } finally {
@@ -45,25 +56,43 @@ export function PendingRequestsScreen({ navigation }: Props) {
     }
   };
 
-  if (loading) return <LoadingView message="Loading pending requests..." />;
+  const renderBooking = useCallback(({ item }: { item: AdminBookingSummary }) => (
+    <AdminBookingCard booking={item} readOnly={isSuperAdmin} onPress={() => navigation.navigate('BookingReview', { bookingId: item.id })} />
+  ), [isSuperAdmin, navigation]);
+
+  if (loading) return <LoadingView message={isSuperAdmin ? 'Loading global pending requests...' : 'Loading pending requests...'} />;
 
   return (
     <FlatList
       style={styles.root}
-      contentContainerStyle={styles.content}
+      contentContainerStyle={[
+        styles.content,
+        {
+          paddingTop: insets.top + TOP_SAFE_AREA_PADDING,
+          paddingBottom: tabBarHeight + EXTRA_TAB_PADDING
+        }
+      ]}
       data={bookings}
       keyExtractor={(item) => item.id}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-      ListHeaderComponent={error ? <ErrorView message={error} onRetry={() => void onRefresh()} /> : null}
-      ListEmptyComponent={<EmptyState title="No pending requests" message="New booking requests will appear here for review." />}
-      renderItem={({ item }) => (
-        <AdminBookingCard booking={item} onPress={() => navigation.navigate('BookingReview', { bookingId: item.id })} />
-      )}
+      ListHeaderComponent={
+        <View style={styles.header}>
+          {error ? <ErrorView message={error} onRetry={() => void onRefresh()} /> : null}
+          {isSuperAdmin ? (
+            <View style={styles.auditBanner}>
+              <Text style={styles.auditTitle}>Global Pending Requests</Text>
+              <Text style={styles.auditText}>Read-only view of pending booking requests across all departments. Department admins handle approvals.</Text>
+            </View>
+          ) : null}
+        </View>
+      }
+      ListEmptyComponent={<EmptyState title={isSuperAdmin ? 'No global pending requests' : 'No pending requests'} message={isSuperAdmin ? 'Pending bookings across all departments will appear here.' : 'New booking requests will appear here for review.'} />}
+      renderItem={renderBooking}
     />
   );
 }
 
-export function AdminBookingCard({ booking, onPress }: { booking: AdminBookingSummary; onPress: () => void }) {
+export const AdminBookingCard = memo(function AdminBookingCard({ booking, onPress, readOnly = false }: { booking: AdminBookingSummary; onPress: () => void; readOnly?: boolean }) {
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.card, pressed && styles.pressed]}>
       <View style={styles.cardHeader}>
@@ -72,15 +101,23 @@ export function AdminBookingCard({ booking, onPress }: { booking: AdminBookingSu
       </View>
       <View style={styles.infoGrid}>
         <Info label="Requested by" value={booking.requesterName ?? 'Unknown'} />
-        <Info label="Department" value={booking.resolvedDepartment ?? 'Not provided'} />
+        <Info label="Requester Dept" value={booking.requesterDepartment ?? 'Not provided'} />
+        <Info label="Venue Dept" value={booking.resolvedDepartment ?? 'Not provided'} />
         <Info label="Hall" value={booking.hallName ?? 'Hall unavailable'} />
       </View>
+      {readOnly ? <Text style={styles.auditNote}>Read-only audit view. Assigned approver: {booking.resolvedDepartment ?? 'venue department'} admin.</Text> : null}
       <Text style={styles.time}>
         {format(new Date(booking.startTime), 'dd MMM yyyy')} • {format(new Date(booking.startTime), 'h:mm a')} - {format(new Date(booking.endTime), 'h:mm a')}
       </Text>
+      {booking.status === 'revoked' ? (
+        <View style={styles.revokedInfo}>
+          <Info label="Revoked on" value={booking.revokedAt ? format(new Date(booking.revokedAt), 'dd MMM yyyy, h:mm a') : 'Unknown'} />
+          <Info label="Reason" value={booking.revocationReason ?? 'No reason provided'} />
+        </View>
+      ) : null}
     </Pressable>
   );
-}
+});
 
 function Info({ label, value }: { label: string; value: string }) {
   return (
@@ -99,6 +136,29 @@ const styles = StyleSheet.create({
   content: {
     padding: spacing.md,
     gap: spacing.md
+  },
+  header: {
+    gap: spacing.md,
+    marginBottom: spacing.sm
+  },
+  auditBanner: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    gap: spacing.xs
+  },
+  auditTitle: {
+    color: colors.text,
+    fontSize: fontSizes.lg,
+    fontWeight: '900'
+  },
+  auditText: {
+    color: colors.textMuted,
+    fontSize: fontSizes.sm,
+    fontWeight: '700',
+    lineHeight: 20
   },
   card: {
     backgroundColor: colors.surface,
@@ -147,5 +207,15 @@ const styles = StyleSheet.create({
     color: colors.primary,
     fontSize: fontSizes.sm,
     fontWeight: '900'
+  },
+  revokedInfo: {
+    marginTop: spacing.sm,
+    gap: spacing.xs
+  },
+  auditNote: {
+    color: colors.textMuted,
+    fontSize: fontSizes.xs,
+    fontWeight: '800',
+    lineHeight: 18
   }
 });

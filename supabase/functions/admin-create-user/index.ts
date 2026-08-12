@@ -8,6 +8,7 @@ type CreateUserRequest = {
   department?: string;
 };
 
+const SUPER_ADMIN_EMAIL = 'venueverse.srec@gmail.com';
 const validRoles = ['user', 'admin', 'super_admin'];
 const validDepartments = [
   'IT',
@@ -24,11 +25,13 @@ const validDepartments = [
   'EIE',
   'CDPD',
   'Library',
+  'Administrative Office',
   'Others'
 ];
 
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Origin': Deno.env.get('VENUEVERSE_ALLOWED_WEB_ORIGIN') || '*',
+  'Vary': 'Origin',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS'
 };
@@ -62,26 +65,60 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'Unauthorized.' }, 401);
   }
 
-  const { data: callerProfile, error: profileError } = await supabaseAdmin
+  const { data: callerProfileById, error: profileError } = await supabaseAdmin
     .from('profiles')
-    .select('role')
+    .select('role, department')
     .eq('id', authData.user.id)
     .maybeSingle();
 
   if (profileError) {
-    return jsonResponse({ error: profileError.message }, 500);
+    console.warn('admin-create-user profile lookup failed:', profileError.message);
+    return jsonResponse({ error: 'Unable to verify admin permissions.' }, 500);
   }
 
-  if (callerProfile?.role !== 'super_admin') {
-    return jsonResponse({ error: 'Access denied.' }, 403);
+  let callerProfile = callerProfileById;
+
+  if (!callerProfile && authData.user.email) {
+    const normalizedEmail = authData.user.email.trim().toLowerCase();
+    const { data: callerProfileByEmail, error: profileEmailError } = await supabaseAdmin
+      .from('profiles')
+      .select('role, department')
+      .ilike('email', normalizedEmail)
+      .maybeSingle();
+
+    if (profileEmailError) {
+      console.warn('admin-create-user email profile lookup failed:', profileEmailError.message);
+      return jsonResponse({ error: 'Unable to verify admin permissions.' }, 500);
+    }
+
+    if (callerProfileByEmail) {
+      callerProfile = callerProfileByEmail;
+    }
   }
 
-  const rateLimited = await checkRateLimit({
+  if (!callerProfile && authData.user.email?.trim().toLowerCase() === SUPER_ADMIN_EMAIL) {
+    callerProfile = { role: 'super_admin', department: '' };
+  }
+
+  if (!callerProfile || (callerProfile.role !== 'admin' && callerProfile.role !== 'super_admin')) {
+    return jsonResponse({ error: 'Only admins can create users.' }, 403);
+  }
+
+  if (callerProfile.role === 'admin' && !callerProfile.department) {
+    return jsonResponse({ error: 'Admin department is not assigned.' }, 403);
+  }
+
+  const { limited: rateLimited, error: rateLimitError } = await checkRateLimit({
     supabase: supabaseAdmin,
     key: `admin-create-user:${authData.user.id}`,
     maxRequests: 10,
     windowSeconds: 300
   });
+
+  if (rateLimitError) {
+    console.warn('admin-create-user rate limiter unavailable:', rateLimitError);
+    return jsonResponse({ error: 'Rate limiter unavailable.' }, 500);
+  }
 
   if (rateLimited) {
     return jsonResponse({ error: 'Rate limit exceeded. Please try again later.' }, 429);
@@ -96,8 +133,20 @@ Deno.serve(async (req) => {
   const fullName = payload.full_name!.trim();
   const email = payload.email!.trim().toLowerCase();
   const temporaryPassword = payload.temporary_password!;
-  const role = payload.role!;
-  const department = payload.department!;
+  if (callerProfile.role === 'admin' && payload.department && payload.department !== callerProfile.department) {
+    return jsonResponse({ error: 'Department admins can create users only in their own department.' }, 403);
+  }
+
+  const role = callerProfile.role === 'super_admin' ? payload.role || 'user' : 'user';
+  const department = callerProfile.role === 'super_admin' ? payload.department!.trim() : callerProfile.department;
+
+  if (callerProfile.role !== 'super_admin' && role !== 'user') {
+    return jsonResponse({ error: 'Department admins can create only users.' }, 403);
+  }
+
+  if (role === 'super_admin' && email !== SUPER_ADMIN_EMAIL) {
+    return jsonResponse({ error: 'Only venueverse.srec@gmail.com can be Super Admin.' }, 403);
+  }
 
   const { data: createdUserData, error: createError } = await supabaseAdmin.auth.admin.createUser({
     email,
@@ -113,7 +162,10 @@ Deno.serve(async (req) => {
   if (createError) {
     const message = createError.message.toLowerCase().includes('already')
       ? 'User already exists with this email.'
-      : createError.message;
+      : 'Unable to create user.';
+    if (!createError.message.toLowerCase().includes('already')) {
+      console.warn('admin-create-user createUser failed:', createError.message);
+    }
     return jsonResponse({ error: message }, 400);
   }
 
@@ -122,28 +174,45 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'Unable to create user.' }, 500);
   }
 
-  const { error: profileInsertError } = await supabaseAdmin
-    .from('profiles')
-    .upsert(
-      {
-        id: createdUser.id,
-        full_name: fullName,
-        email,
-        department,
-        role
-      },
-      { onConflict: 'id' }
-    );
+  const { error: profileInsertError } = await supabaseAdmin.rpc('admin_finalize_created_user_profile', {
+    p_user_id: createdUser.id,
+    p_full_name: fullName,
+    p_email: email,
+    p_department: department,
+    p_role: role
+  });
 
   if (profileInsertError) {
     await supabaseAdmin.auth.admin.deleteUser(createdUser.id).catch(() => undefined);
-    return jsonResponse({ error: profileInsertError.message }, 500);
+    console.warn('admin-create-user profile finalize failed:', sanitizeError(profileInsertError.message));
+    return jsonResponse({ error: 'Unable to create user profile.' }, 500);
   }
+
+  await supabaseAdmin.from('notifications').insert({
+    user_id: createdUser.id,
+    title: 'VenueVerse account created',
+    message: 'Your VenueVerse account has been created.',
+    type: 'account_created',
+    data: {
+      type: 'account_created',
+      role,
+      department
+    },
+    is_read: false
+  }).catch((notificationError) => {
+    console.warn('admin-create-user notification insert failed:', sanitizeError(notificationError.message));
+  });
 
   return jsonResponse({
     success: true,
-    user_id: createdUser.id,
-    email
+    message: 'User created successfully.',
+    user: {
+      id: createdUser.id,
+      email,
+      full_name: fullName,
+      department,
+      role
+    }
   });
 });
 
@@ -156,13 +225,19 @@ function validatePayload(payload: CreateUserRequest) {
 
   if (!fullName) return 'Full name is required';
   if (!email) return 'College email is required';
-  if (!email.endsWith('@srec.ac.in')) return 'Use official college email ending with @srec.ac.in';
+  if (!isAllowedAccountEmail(email)) return 'Use official college email ending with @srec.ac.in';
   if (!password) return 'Temporary password is required';
   if (password.length < 6) return 'Password must be at least 6 characters';
-  if (!validRoles.includes(role)) return 'Please select a valid role';
+  if (role && !validRoles.includes(role)) return 'Invalid role. Allowed roles are user, admin, and super_admin.';
+  if (role === 'super_admin' && email !== SUPER_ADMIN_EMAIL) return 'Only venueverse.srec@gmail.com can be Super Admin.';
+  if (!department) return 'Please select a department';
   if (!validDepartments.includes(department)) return 'Please select a valid department';
 
   return '';
+}
+
+function isAllowedAccountEmail(email: string) {
+  return email.endsWith('@srec.ac.in') || email === SUPER_ADMIN_EMAIL;
 }
 
 async function checkRateLimit({
@@ -183,10 +258,10 @@ async function checkRateLimit({
   });
 
   if (error) {
-    throw error;
+    return { limited: false, error: error.message };
   }
 
-  return !data;
+  return { limited: !data, error: '' };
 }
 
 function jsonResponse(body: unknown, status = 200) {
@@ -197,4 +272,8 @@ function jsonResponse(body: unknown, status = 200) {
       'Content-Type': 'application/json'
     }
   });
+}
+
+function sanitizeError(value: string | null | undefined) {
+  return (value ?? 'Unknown error').replace(/Bearer\s+[A-Za-z0-9._-]+/g, 'Bearer [redacted]');
 }

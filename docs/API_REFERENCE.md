@@ -11,7 +11,7 @@ VenueVerse does not use a custom REST API server. The mobile app talks directly 
 - Supabase Realtime.
 - Supabase Edge Functions.
 
-Public self-registration is not implemented. The app does not call `supabase.auth.signUp()` from public screens. Account creation happens through `admin-create-user` from the super admin Add User screen.
+Public self-registration is not implemented. The app does not call `supabase.auth.signUp()` from public screens. Account creation happens through `admin-create-user` from the admin Add User screen.
 
 ## Auth Operations
 
@@ -20,7 +20,9 @@ Public self-registration is not implemented. The app does not call `supabase.aut
 | Get session | `supabase.auth.getSession()` | `src/store/AuthContext.tsx` | Restore existing session on app start. |
 | Listen for auth state | `supabase.auth.onAuthStateChange()` | `src/store/AuthContext.tsx` | Keep session/profile state synced. |
 | Login | `supabase.auth.signInWithPassword()` | `src/store/AuthContext.tsx` | Authenticate user. |
-| Forgot password | `supabase.auth.resetPasswordForEmail()` | `src/store/AuthContext.tsx` | Send reset email. |
+| Forgot password send OTP | `supabase.auth.resetPasswordForEmail()` with no redirect URL | `src/services/passwordResetService.ts` | Send reset OTP through Supabase Gmail SMTP. |
+| Forgot password verify OTP | `supabase.auth.verifyOtp({ type: 'recovery' })` | `src/services/passwordResetService.ts` | Verify reset code and establish a recovery session. |
+| Forgot password update | `supabase.auth.updateUser({ password })` | `src/services/passwordResetService.ts` | Set new password after OTP verification. |
 | Logout | `supabase.auth.signOut()` | `src/store/AuthContext.tsx` | End session. |
 | Change password verify | `supabase.auth.signInWithPassword()` | `src/screens/profile/ChangePasswordScreen.tsx` | Verify current password. |
 | Change password update | `supabase.auth.updateUser()` | `src/screens/profile/ChangePasswordScreen.tsx` | Set new password. |
@@ -33,7 +35,7 @@ Public self-registration is not implemented. The app does not call `supabase.aut
 | `listProfiles()` | List profiles for user management. | `profiles.select(...).order('full_name')` |
 | `getProfileById(userId)` | Read one profile for user details. | `profiles.select(...).eq('id', userId).maybeSingle()` |
 | `updateUserRole(userId, role)` | Update user role. | `profiles.update({ role }).eq('id', userId)` |
-| `createAdminUser(input)` | Create user through secure super-admin Edge Function. | `functions.invoke('admin-create-user')` |
+| `createAdminUser(input)` | Create user through secure admin Edge Function. | `functions.invoke('admin-create-user')` |
 | `updateOwnProfile(userId, input)` | Update current user's profile. | `profiles.update(...).eq('id', userId).select(...).single()` |
 | `getUserBookingHistory(userId)` | Read bookings for user detail/history. | `bookings.select(...halls...).eq('user_id', userId)` |
 
@@ -165,7 +167,7 @@ Parameters:
 
 Returns: table of recipient `user_id` values.
 
-Purpose: Inserts admin/super admin notifications for a newly submitted booking.
+Purpose: Inserts admin notifications for a newly submitted booking.
 
 ## Edge Function Reference
 
@@ -173,7 +175,7 @@ Purpose: Inserts admin/super admin notifications for a newly submitted booking.
 
 Method: `POST`
 
-Purpose: Create a Supabase Auth user and matching profile. Caller must be a `super_admin`.
+Purpose: Create a Supabase Auth user and matching profile. Caller must be an `admin`.
 
 Body:
 
@@ -202,7 +204,7 @@ Validation:
 - Full name required.
 - Email must end with `@srec.ac.in`.
 - Temporary password must be at least 6 characters.
-- Role must be `user`, `admin`, or `super_admin`.
+- Role must be `user` or `admin`.
 - Department must be in the allowed department list.
 
 ### `send-push-notification`
@@ -237,6 +239,6 @@ Success response:
 Authorization behavior:
 
 - Caller can notify self.
-- Admin/super admin can notify users.
-- Booking requester can notify admins/super admins for `new_booking_request`.
+- Admin can notify users.
+- Booking requester can notify admins for `new_booking_request`.
 - Invalid or unregistered Expo tokens are ignored or cleaned up when Expo reports `DeviceNotRegistered`.

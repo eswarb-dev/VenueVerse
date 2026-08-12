@@ -1,0 +1,20 @@
+name = "venueverse-receipts"
+main = "src/index.ts"
+compatibility_date = "2026-07-20"
+
+[vars]
+SUPABASE_URL = "https://ovpmleiiwdvbvndplwqp.supabase.co"
+VENUEVERSE_ALLOWED_WEB_ORIGIN = ""
+SMTP_HOST = "smtp.gmail.com"
+SMTP_PORT = "465"
+SMTP_FROM = "VenueVerse <venueverse.srec@gmail.com>"
+
+[triggers]
+crons = ["*/1 * * * *"]
+
+# Set these as Worker secrets, never as committed vars:
+# npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY
+# npx wrangler secret put RECEIPT_QUEUE_SECRET
+# npx wrangler secret put WORKER_ADMIN_SECRET
+# npx wrangler secret put SMTP_USERNAME
+# npx wrangler secret put SMTP_PASSWORD

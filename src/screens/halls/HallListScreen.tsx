@@ -1,23 +1,31 @@
+import { CompositeScreenProps } from '@react-navigation/native';
+import { BottomTabScreenProps, useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { addMonths, format, isBefore, startOfMonth } from 'date-fns';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, Image, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Calendar, DateData } from 'react-native-calendars';
 import { MarkedDates } from 'react-native-calendars/src/types';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppButton } from '@/components/AppButton';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorView } from '@/components/ErrorView';
-import { formatLocation } from '@/components/HallCard';
+import { formatVenueDescription } from '@/components/HallCard';
 import { LoadingView } from '@/components/LoadingView';
-import { DEPARTMENT_OPTIONS, getVenueTypeOptions } from '@/constants/departments';
+import { DEPARTMENT_OPTIONS } from '@/constants/departments';
 import { colors, fontSizes, radius, spacing } from '@/constants/theme';
+import { EXTRA_TAB_PADDING, TOP_SAFE_AREA_PADDING } from '@/constants/layout';
 import { TIME_SLOTS, TimeSlot } from '@/constants/timeSlots';
-import { AppStackParamList } from '@/navigation/types';
+import { normalizeVenueType, VENUE_TYPES } from '@/constants/venueTypes';
+import { AppStackParamList, UserTabParamList } from '@/navigation/types';
 import { getBookingDateKeysForRange, getBookingsForDate } from '@/services/bookingService';
-import { getActiveHalls } from '@/services/hallService';
-import { BookingAvailability, Hall } from '@/types/venue';
+import { getActiveHallsByDepartment } from '@/services/hallService';
+import { BookedSlotInfo, BookingAvailability, Hall } from '@/types/venue';
 
-type Props = NativeStackScreenProps<AppStackParamList, 'Halls'>;
+type Props = CompositeScreenProps<
+  BottomTabScreenProps<UserTabParamList, 'Book'>,
+  NativeStackScreenProps<AppStackParamList>
+>;
 type HallAvailability = {
   hallId: string;
   isAvailable: boolean;
@@ -36,11 +44,15 @@ const filterTitles: Record<FilterKey, string> = {
 };
 
 export function HallListScreen({ navigation }: Props) {
+  const tabBarHeight = useBottomTabBarHeight();
+  const insets = useSafeAreaInsets();
   const [halls, setHalls] = useState<Hall[]>([]);
   const [selectedCapacity, setSelectedCapacity] = useState('Any');
   const [selectedDepartment, setSelectedDepartment] = useState('All');
   const [selectedVenueType, setSelectedVenueType] = useState('All');
+  const [selectedHallId, setSelectedHallId] = useState<string | null>(null);
   const [openFilter, setOpenFilter] = useState<FilterKey | null>(null);
+  const [hallPickerVisible, setHallPickerVisible] = useState(false);
   const [selectedDate, setSelectedDate] = useState(() => getLocalDateString());
   const [selectedSlotIds, setSelectedSlotIds] = useState<string[]>([]);
   const [draftSlotIds, setDraftSlotIds] = useState<string[]>([]);
@@ -55,12 +67,18 @@ export function HallListScreen({ navigation }: Props) {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [selectionError, setSelectionError] = useState('');
+  const availabilityRequestRef = useRef(0);
+  const calendarRequestRef = useRef(0);
 
-  const loadHalls = useCallback(async () => {
+  const loadHalls = useCallback(async (forceRefresh = false) => {
     setError('');
-    const nextHalls = await getActiveHalls();
+    if (selectedDepartment === 'All') {
+      setHalls([]);
+      return;
+    }
+    const nextHalls = await getActiveHallsByDepartment(selectedDepartment, { forceRefresh });
     setHalls(nextHalls);
-  }, []);
+  }, [selectedDepartment]);
 
   useEffect(() => {
     setLoading(true);
@@ -72,7 +90,7 @@ export function HallListScreen({ navigation }: Props) {
   const onRefresh = async () => {
     setRefreshing(true);
     try {
-      await loadHalls();
+      await loadHalls(true);
     } catch (refreshError) {
       setError(refreshError instanceof Error ? refreshError.message : 'Unable to refresh halls.');
     } finally {
@@ -81,40 +99,58 @@ export function HallListScreen({ navigation }: Props) {
   };
 
   useEffect(() => {
-    if (!selectedDate) {
+    if (!selectedDate || !selectedHallId) {
       setSelectedDateBookings([]);
       return;
     }
 
     const startOfDayIso = getDayStart(selectedDate).toISOString();
     const nextDayStartIso = getNextDayStart(selectedDate).toISOString();
+    const requestId = availabilityRequestRef.current + 1;
+    availabilityRequestRef.current = requestId;
     setLoadingAvailability(true);
-    getBookingsForDate({ startOfDay: startOfDayIso, endOfDay: nextDayStartIso })
-      .then(setSelectedDateBookings)
-      .catch((availabilityError) => setError(availabilityError instanceof Error ? availabilityError.message : 'Failed to load booking availability.'))
-      .finally(() => setLoadingAvailability(false));
-  }, [selectedDate]);
+    getBookingsForDate({ startOfDay: startOfDayIso, endOfDay: nextDayStartIso, hallId: selectedHallId })
+      .then((bookings) => {
+        if (availabilityRequestRef.current === requestId) setSelectedDateBookings(bookings);
+      })
+      .catch((availabilityError) => {
+        if (availabilityRequestRef.current === requestId) setError(availabilityError instanceof Error ? availabilityError.message : 'Failed to load booking availability.');
+      })
+      .finally(() => {
+        if (availabilityRequestRef.current === requestId) setLoadingAvailability(false);
+      });
+  }, [selectedDate, selectedHallId]);
 
   useEffect(() => {
     const monthStart = getDayStart(visibleMonth);
     const nextMonthStart = addMonths(monthStart, 1);
+    const requestId = calendarRequestRef.current + 1;
+    calendarRequestRef.current = requestId;
     setLoadingCalendarMarks(true);
     getBookingDateKeysForRange({
       startDate: monthStart.toISOString(),
       endDate: nextMonthStart.toISOString()
     })
-      .then(setBookingDateKeys)
-      .catch((calendarError) => setError(calendarError instanceof Error ? calendarError.message : 'Failed to load calendar markings.'))
-      .finally(() => setLoadingCalendarMarks(false));
+      .then((dateKeys) => {
+        if (calendarRequestRef.current === requestId) setBookingDateKeys(dateKeys);
+      })
+      .catch((calendarError) => {
+        if (calendarRequestRef.current === requestId) setError(calendarError instanceof Error ? calendarError.message : 'Failed to load calendar markings.');
+      })
+      .finally(() => {
+        if (calendarRequestRef.current === requestId) setLoadingCalendarMarks(false);
+      });
   }, [visibleMonth]);
 
   useEffect(() => {
+    setHalls([]);
     setSelectedVenueType('All');
+    setSelectedHallId(null);
     setSelectedSlotIds([]);
     setDraftSlotIds([]);
   }, [selectedDepartment]);
 
-  const baseFilteredHalls = useMemo(() => {
+  const selectableHalls = useMemo(() => {
     return getRelevantHallsForAvailability({
       halls,
       selectedCapacity,
@@ -124,13 +160,24 @@ export function HallListScreen({ navigation }: Props) {
     });
   }, [halls, selectedCapacity, selectedDepartment, selectedVenueType]);
 
-  const relevantHallsForSlots = useMemo(() => getRelevantHallsForAvailability({
-    halls,
-    selectedCapacity,
-    selectedDepartment,
-    selectedVenueType,
-    requireDepartment: true
-  }), [halls, selectedCapacity, selectedDepartment, selectedVenueType]);
+  const selectedHall = useMemo(
+    () => selectableHalls.find((hall) => hall.id === selectedHallId) ?? null,
+    [selectableHalls, selectedHallId]
+  );
+
+  useEffect(() => {
+    if (!selectedHallId) return;
+    if (selectableHalls.some((hall) => hall.id === selectedHallId)) return;
+    setSelectedHallId(null);
+    setSelectedSlotIds([]);
+    setDraftSlotIds([]);
+  }, [selectableHalls, selectedHallId]);
+
+  const baseFilteredHalls = useMemo(() => {
+    return selectedHall ? [selectedHall] : [];
+  }, [selectedHall]);
+
+  const relevantHallsForSlots = useMemo(() => (selectedHall ? [selectedHall] : []), [selectedHall]);
 
   const selectedSlots = useMemo(() => getSelectedSlots(selectedSlotIds), [selectedSlotIds]);
   const selectedSlotsAreContinuous = useMemo(() => areSlotsContinuous(selectedSlots), [selectedSlots]);
@@ -185,6 +232,27 @@ export function HallListScreen({ navigation }: Props) {
     return result;
   }, [relevantHallsForSlots, selectedDate, selectedDateBookings]);
 
+  const bookedSlotInfo = useMemo(() => {
+    const result = new Map<string, BookedSlotInfo>();
+    if (!selectedDate || !selectedHallId) return result;
+
+    TIME_SLOTS.forEach((slot) => {
+      const { startTime, endTime } = buildSlotDateTimes(selectedDate, slot);
+      const booking = findBookedSlotInfo(selectedHallId, startTime, endTime, selectedDateBookings);
+      if (!booking) return;
+
+      result.set(slot.id, {
+        bookingId: booking.id,
+        eventTitle: booking.eventTitle ?? 'Venue booking',
+        requesterName: booking.requesterName ?? null,
+        requesterDepartment: booking.requesterDepartment ?? null,
+        status: booking.status
+      });
+    });
+
+    return result;
+  }, [selectedDate, selectedDateBookings, selectedHallId]);
+
   const markedDates = useMemo<MarkedDates>(() => {
     const marks: MarkedDates = {};
     bookingDateKeys.forEach((dateKey) => {
@@ -219,6 +287,10 @@ export function HallListScreen({ navigation }: Props) {
   };
 
   const openTimeSlotPicker = () => {
+    if (!selectedHall) {
+      setSelectionError('Please select a venue/hall.');
+      return;
+    }
     setDraftSlotIds(selectedSlotIds);
     setTimeSlotPickerError('');
     setTimeSlotPickerVisible(true);
@@ -257,6 +329,11 @@ export function HallListScreen({ navigation }: Props) {
   };
 
   const onSelectHall = (hallId: string) => {
+    if (!selectedHall || selectedHall.id !== hallId) {
+      setSelectionError('Please select a venue/hall.');
+      return;
+    }
+
     if (!selectedDate) {
       setSelectionError('Please select a booking date');
       return;
@@ -291,7 +368,8 @@ export function HallListScreen({ navigation }: Props) {
     });
   };
 
-  const activeOptions = openFilter ? getFilterOptions(openFilter, selectedDepartment) : [];
+  const venueTypeOptions = useMemo(() => getVenueTypeOptionsForDepartment(halls, selectedDepartment), [halls, selectedDepartment]);
+  const activeOptions = openFilter ? getFilterOptions(openFilter, venueTypeOptions) : [];
   const activeValue = openFilter
     ? getFilterValueFromState(openFilter, {
         selectedCapacity,
@@ -301,20 +379,36 @@ export function HallListScreen({ navigation }: Props) {
     : '';
   const handleFilterSelect = (value: string) => {
     if (openFilter === 'capacity') setSelectedCapacity(value);
-    if (openFilter === 'department') setSelectedDepartment(value);
-    if (openFilter === 'venueType') setSelectedVenueType(value);
+    if (openFilter === 'department') {
+      setSelectedDepartment(value);
+    }
+    if (openFilter === 'venueType') {
+      setSelectedVenueType(value);
+      setSelectedHallId(null);
+      setSelectedSlotIds([]);
+      setDraftSlotIds([]);
+    }
     setOpenFilter(null);
   };
   const venueTypeDisabled = selectedDepartment === 'All';
+  const hallSelectorDisabled = selectedDepartment === 'All' || selectableHalls.length === 0;
+  const hallSelectorValue = getHallSelectorValue({
+    selectedDepartment,
+    selectedHall,
+    selectableHalls,
+    selectedVenueType
+  });
 
   if (loading) return <LoadingView message="Loading active halls..." />;
 
   const emptyState = getEmptyState({
     selectedDepartment,
+    selectedHall,
     selectedDate,
     selectedSlotCount: selectedSlots.length,
     selectedSlotsAreContinuous,
     totalHalls: halls.length,
+    selectableCount: selectableHalls.length,
     baseCount: baseFilteredHalls.length,
     filteredCount: filteredHalls.length
   });
@@ -323,7 +417,13 @@ export function HallListScreen({ navigation }: Props) {
   return (
     <FlatList
       style={styles.root}
-      contentContainerStyle={styles.content}
+      contentContainerStyle={[
+        styles.content,
+        {
+          paddingTop: insets.top + TOP_SAFE_AREA_PADDING,
+          paddingBottom: tabBarHeight + EXTRA_TAB_PADDING
+        }
+      ]}
       data={filteredHalls}
       keyExtractor={(item) => item.id}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
@@ -339,6 +439,12 @@ export function HallListScreen({ navigation }: Props) {
               disabled={venueTypeDisabled}
               onPress={() => setOpenFilter('venueType')}
             />
+            <FilterDropdownRow
+              label="Venue / Hall"
+              value={hallSelectorValue}
+              disabled={hallSelectorDisabled}
+              onPress={() => setHallPickerVisible(true)}
+            />
           </View>
           <OptionPickerModal
             visible={Boolean(openFilter)}
@@ -347,6 +453,19 @@ export function HallListScreen({ navigation }: Props) {
             selectedValue={activeValue}
             onSelect={handleFilterSelect}
             onClose={() => setOpenFilter(null)}
+          />
+          <HallPickerModal
+            visible={hallPickerVisible}
+            halls={selectableHalls}
+            selectedHallId={selectedHallId}
+            onSelect={(hall) => {
+              setSelectedHallId(hall.id);
+              setSelectedSlotIds([]);
+              setDraftSlotIds([]);
+              setSelectionError('');
+              setHallPickerVisible(false);
+            }}
+            onClose={() => setHallPickerVisible(false)}
           />
           <View style={styles.calendarSection}>
             <Text style={styles.filterTitle}>Select Date</Text>
@@ -376,8 +495,8 @@ export function HallListScreen({ navigation }: Props) {
           <Text style={styles.selectedDate}>{selectedDateLabel}</Text>
           <View style={styles.section}>
             <Text style={styles.filterTitle}>Select Time Slot</Text>
-            <Text style={styles.sectionHint}>Select one or more continuous slots</Text>
-            <MultiSelectDropdownRow label="Time Slot" value={selectedSlotLabel} onPress={openTimeSlotPicker} />
+            <Text style={styles.sectionHint}>{selectedHall ? 'Select one or more continuous slots' : 'Select a venue to view available slots.'}</Text>
+            <MultiSelectDropdownRow label="Time Slot" value={selectedHall ? selectedSlotLabel : 'Select venue first'} disabled={!selectedHall} onPress={openTimeSlotPicker} />
             {selectedSlots.length > 0 && !selectedSlotsAreContinuous ? (
               <Text style={styles.slotWarning}>Selected slots must be continuous.</Text>
             ) : null}
@@ -387,14 +506,16 @@ export function HallListScreen({ navigation }: Props) {
             selectedSlotIds={draftSlotIds}
             error={timeSlotPickerError}
             onToggleSlot={toggleDraftSlot}
+            onBlockedSlot={() => setTimeSlotPickerError('This venue is already booked for this slot.')}
             onApply={applyTimeSlots}
             onClose={closeTimeSlotPicker}
             isSlotDisabled={(slot) => !selectedDate || slotAvailability.get(slot.id) === false}
             getSlotStatus={(slot) => getSlotStatus(slot, selectedDate, slotAvailability)}
+            getBookedSlotInfo={(slot) => bookedSlotInfo.get(slot.id) ?? null}
           />
           {selectionError ? <Text style={styles.selectionError}>{selectionError}</Text> : null}
           <View style={styles.resultsHeader}>
-            <Text style={styles.resultsTitle}>Available Halls</Text>
+            <Text style={styles.resultsTitle}>Selected Venue</Text>
             {loadingAvailability ? <Text style={styles.resultsMeta}>Checking availability...</Text> : null}
           </View>
         </View>
@@ -440,7 +561,7 @@ function VenueAvailabilityCard({
           </Text>
         </View>
       </View>
-      <Text style={styles.venueMeta}>{hall.location || formatLocation(hall.block, hall.floor)}</Text>
+      <Text style={styles.venueMeta}>{normalizeVenueType(hall.venueType) || 'Venue'} • {formatVenueDescription(hall)}</Text>
       <Text style={styles.venueCapacity}>{hall.capacity} seats</Text>
       <View style={styles.facilityRow}>
         {visibleFacilities.items.map((facility) => (
@@ -475,15 +596,65 @@ function FilterDropdownRow({
   );
 }
 
-function MultiSelectDropdownRow({ label, value, onPress }: { label: string; value: string; onPress: () => void }) {
+function MultiSelectDropdownRow({ label, value, onPress, disabled = false }: { label: string; value: string; onPress: () => void; disabled?: boolean }) {
   return (
-    <Pressable onPress={onPress} style={styles.timeSlotDropdown}>
-      <Text style={styles.dropdownLabel}>{label}</Text>
+    <Pressable disabled={disabled} onPress={onPress} style={[styles.timeSlotDropdown, disabled && styles.dropdownRowDisabled]}>
+      <Text style={[styles.dropdownLabel, disabled && styles.dropdownTextDisabled]}>{label}</Text>
       <View style={styles.timeSlotDropdownValueWrap}>
-        <Text numberOfLines={1} style={styles.dropdownValue}>{value}</Text>
-        <Text style={styles.dropdownArrow}>v</Text>
+        <Text numberOfLines={1} style={[styles.dropdownValue, disabled && styles.dropdownTextDisabled]}>{value}</Text>
+        <Text style={[styles.dropdownArrow, disabled && styles.dropdownTextDisabled]}>{disabled ? '' : 'v'}</Text>
       </View>
     </Pressable>
+  );
+}
+
+function HallPickerModal({
+  visible,
+  halls,
+  selectedHallId,
+  onSelect,
+  onClose
+}: {
+  visible: boolean;
+  halls: Hall[];
+  selectedHallId: string | null;
+  onSelect: (hall: Hall) => void;
+  onClose: () => void;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={styles.modalBackdrop} onPress={onClose}>
+        <Pressable style={styles.optionSheet}>
+          <View style={styles.optionHeader}>
+            <Text style={styles.optionTitle}>Select Venue</Text>
+            <Pressable onPress={onClose} style={styles.optionCloseButton}>
+              <Text style={styles.optionCloseText}>Cancel</Text>
+            </Pressable>
+          </View>
+          <ScrollView style={styles.optionList} contentContainerStyle={styles.optionListContent}>
+            {halls.map((hall) => {
+              const selected = hall.id === selectedHallId;
+              return (
+                <Pressable
+                  key={hall.id}
+                  onPress={() => onSelect(hall)}
+                  style={[styles.hallOptionItem, selected && styles.optionItemSelected]}
+                >
+                  <View style={styles.hallOptionTextWrap}>
+                    <Text style={[styles.optionText, selected && styles.optionTextSelected]}>{hall.name}</Text>
+                    <Text style={styles.hallOptionMeta}>
+                      {normalizeVenueType(hall.venueType) || 'Venue'} • {formatVenueDescription(hall)}
+                    </Text>
+                    <Text style={styles.hallOptionCapacity}>Capacity: {hall.capacity}</Text>
+                  </View>
+                  {selected ? <Text style={styles.optionCheck}>Selected</Text> : null}
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </Pressable>
+      </Pressable>
+    </Modal>
   );
 }
 
@@ -538,19 +709,23 @@ function TimeSlotPickerModal({
   selectedSlotIds,
   error,
   onToggleSlot,
+  onBlockedSlot,
   onApply,
   onClose,
   isSlotDisabled,
-  getSlotStatus
+  getSlotStatus,
+  getBookedSlotInfo
 }: {
   visible: boolean;
   selectedSlotIds: string[];
   error: string;
   onToggleSlot: (slotId: string) => void;
+  onBlockedSlot: () => void;
   onApply: () => void;
   onClose: () => void;
   isSlotDisabled: (slot: TimeSlot) => boolean;
-  getSlotStatus: (slot: TimeSlot) => 'Select date' | 'Available' | 'Unavailable' | 'Passed';
+  getSlotStatus: (slot: TimeSlot) => 'Select date' | 'Available' | 'Booked' | 'Passed';
+  getBookedSlotInfo: (slot: TimeSlot) => BookedSlotInfo | null;
 }) {
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -565,17 +740,29 @@ function TimeSlotPickerModal({
               const disabled = isSlotDisabled(slot);
               const status = getSlotStatus(slot);
               const statusLabel = selected && !disabled ? 'Selected' : status;
+              const bookingInfo = status === 'Booked' ? getBookedSlotInfo(slot) : null;
               return (
                 <Pressable
                   key={slot.id}
-                  disabled={disabled}
-                  onPress={() => onToggleSlot(slot.id)}
+                  onPress={() => disabled ? onBlockedSlot() : onToggleSlot(slot.id)}
                   style={[styles.slotOptionItem, selected && styles.optionItemSelected, disabled && styles.slotOptionDisabled]}
                 >
                   <Text style={[styles.slotCheckbox, selected && styles.slotCheckboxSelected, disabled && styles.slotOptionMuted]}>
                     {selected ? '✓' : ''}
                   </Text>
-                  <Text style={[styles.slotOptionLabel, disabled && styles.slotOptionMuted]}>{slot.label}</Text>
+                  <View style={styles.slotOptionCopy}>
+                    <Text style={[styles.slotOptionLabel, disabled && styles.slotOptionMuted]}>{slot.label}</Text>
+                    {bookingInfo ? (
+                      <>
+                        <Text style={styles.slotBookingMeta}>
+                          Booked by {bookingInfo.requesterName ?? 'Requester'}{bookingInfo.requesterDepartment ? ` • ${bookingInfo.requesterDepartment}` : ''}
+                        </Text>
+                        <Text style={styles.slotBookingEvent} numberOfLines={1}>
+                          {bookingInfo.eventTitle}
+                        </Text>
+                      </>
+                    ) : null}
+                  </View>
                   <Text
                     style={[
                       styles.slotOptionStatus,
@@ -600,10 +787,10 @@ function TimeSlotPickerModal({
   );
 }
 
-function getFilterOptions(filter: FilterKey, selectedDepartment = 'All') {
+function getFilterOptions(filter: FilterKey, venueTypeOptions: string[]) {
   if (filter === 'capacity') return capacityOptions;
   if (filter === 'department') return departmentOptions;
-  return getVenueTypeOptions(selectedDepartment);
+  return venueTypeOptions;
 }
 
 function getFilterValueFromState(
@@ -624,6 +811,39 @@ function getMinimumCapacity(value: string) {
   if (value === '100+') return 100;
   if (value === '200+') return 200;
   return 0;
+}
+
+function getVenueTypeOptionsForDepartment(halls: Hall[], selectedDepartment: string) {
+  if (selectedDepartment === 'All') return ['All'];
+
+  const availableTypes = new Set(
+    halls
+      .filter((hall) => hall.isActive && hall.department === selectedDepartment)
+      .map((hall) => normalizeVenueType(hall.venueType))
+      .filter(Boolean)
+  );
+  const sortedTypes = VENUE_TYPES.filter((type) => availableTypes.has(type));
+  const customTypes = [...availableTypes].filter((type) => !VENUE_TYPES.includes(type as (typeof VENUE_TYPES)[number])).sort();
+
+  return ['All', ...sortedTypes, ...customTypes];
+}
+
+function getHallSelectorValue({
+  selectedDepartment,
+  selectedHall,
+  selectableHalls,
+  selectedVenueType
+}: {
+  selectedDepartment: string;
+  selectedHall: Hall | null;
+  selectableHalls: Hall[];
+  selectedVenueType: string;
+}) {
+  if (selectedDepartment === 'All') return 'Select department first';
+  if (selectableHalls.length === 0) {
+    return selectedVenueType === 'All' ? 'No venues available' : 'No venues for selected type';
+  }
+  return selectedHall?.name ?? 'Select venue';
 }
 
 function getSelectedSlots(selectedSlotIds: string[]) {
@@ -685,7 +905,7 @@ function getSlotEndLabel(slot: TimeSlot) {
 function getSlotStatus(slot: TimeSlot, selectedDate: string, slotAvailability: Map<string, boolean>) {
   if (!selectedDate) return 'Select date';
   if (isSlotPassed(selectedDate, slot)) return 'Passed';
-  return slotAvailability.get(slot.id) === false ? 'Unavailable' : 'Available';
+  return slotAvailability.get(slot.id) === false ? 'Booked' : 'Available';
 }
 
 function getLocalDateString(date = new Date()) {
@@ -748,6 +968,21 @@ function isHallBookedForRange(hallId: string, rangeStart: string, rangeEnd: stri
   });
 }
 
+function findBookedSlotInfo(hallId: string, rangeStart: string, rangeEnd: string, bookings: BookingAvailability[]) {
+  const selectedStart = new Date(rangeStart).getTime();
+  const selectedEnd = new Date(rangeEnd).getTime();
+
+  return bookings.find((booking) => {
+    if (booking.hallId !== hallId) return false;
+    if (!['pending', 'approved'].includes(booking.status)) return false;
+
+    const bookingStart = new Date(booking.startTime).getTime();
+    const bookingEnd = new Date(booking.endTime).getTime();
+
+    return bookingStart < selectedEnd && bookingEnd > selectedStart;
+  });
+}
+
 function getRelevantHallsForAvailability({
   halls,
   selectedCapacity,
@@ -766,7 +1001,7 @@ function getRelevantHallsForAvailability({
   const minimumCapacity = getMinimumCapacity(selectedCapacity);
   return halls.filter((hall) => {
     const departmentMatch = selectedDepartment === 'All' || hall.department === selectedDepartment;
-    const venueTypeMatch = selectedVenueType === 'All' || hall.venueType === selectedVenueType;
+    const venueTypeMatch = selectedVenueType === 'All' || normalizeVenueType(hall.venueType) === normalizeVenueType(selectedVenueType);
     const capacityMatch = hall.capacity >= minimumCapacity;
 
     return departmentMatch && venueTypeMatch && capacityMatch && hall.isActive;
@@ -775,10 +1010,12 @@ function getRelevantHallsForAvailability({
 
 function getEmptyState(params: {
   selectedDepartment: string;
+  selectedHall: Hall | null;
   selectedDate: string;
   selectedSlotCount: number;
   selectedSlotsAreContinuous: boolean;
   totalHalls: number;
+  selectableCount: number;
   baseCount: number;
   filteredCount: number;
 }) {
@@ -788,6 +1025,12 @@ function getEmptyState(params: {
   if (params.totalHalls === 0) {
     return { title: 'No venues', message: 'No venues have been added yet.' };
   }
+  if (params.selectableCount === 0) {
+    return { title: 'No active venues found', message: 'No active venues found for this department and venue type.' };
+  }
+  if (!params.selectedHall) {
+    return { title: 'Select venue', message: 'Select a Venue / Hall to view available slots.' };
+  }
   if (!params.selectedDate) {
     return { title: 'Select date', message: 'Select a date to view available slots.' };
   }
@@ -796,9 +1039,6 @@ function getEmptyState(params: {
   }
   if (!params.selectedSlotsAreContinuous) {
     return { title: 'Invalid time slot selection', message: 'Please select continuous time slots only.' };
-  }
-  if (params.baseCount === 0) {
-    return { title: 'No halls found', message: 'No halls found. Try changing your filters.' };
   }
   if (params.filteredCount === 0) {
     return { title: 'No available halls', message: 'No venues are available for the selected department, date, and time slots.' };
@@ -896,7 +1136,7 @@ const styles = StyleSheet.create({
   },
   modalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(16, 24, 40, 0.32)',
+    backgroundColor: colors.overlay,
     justifyContent: 'flex-end'
   },
   optionSheet: {
@@ -965,6 +1205,32 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.xs,
     fontWeight: '900'
   },
+  hallOptionItem: {
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    flexDirection: 'row',
+    gap: spacing.md,
+    justifyContent: 'space-between',
+    minHeight: 76,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm
+  },
+  hallOptionTextWrap: {
+    flex: 1,
+    gap: spacing.xs
+  },
+  hallOptionMeta: {
+    color: colors.textMuted,
+    fontSize: fontSizes.xs,
+    fontWeight: '800'
+  },
+  hallOptionCapacity: {
+    color: colors.primary,
+    fontSize: fontSizes.xs,
+    fontWeight: '900'
+  },
   slotOptionItem: {
     alignItems: 'center',
     borderWidth: 1,
@@ -999,9 +1265,22 @@ const styles = StyleSheet.create({
   },
   slotOptionLabel: {
     color: colors.text,
-    flex: 1,
     fontSize: fontSizes.sm,
     fontWeight: '800'
+  },
+  slotOptionCopy: {
+    flex: 1,
+    gap: 2
+  },
+  slotBookingMeta: {
+    color: colors.textMuted,
+    fontSize: fontSizes.xs,
+    fontWeight: '800'
+  },
+  slotBookingEvent: {
+    color: colors.text,
+    fontSize: fontSizes.xs,
+    fontWeight: '700'
   },
   slotOptionStatus: {
     color: colors.textMuted,

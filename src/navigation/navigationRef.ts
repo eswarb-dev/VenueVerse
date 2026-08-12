@@ -7,3 +7,11 @@ export function navigateToNotifications() {
   if (!navigationRef.isReady()) return;
   navigationRef.navigate('AppStack', { screen: 'Notifications' });
 }
+
+export function navigateToBookingDetails(bookingId: string) {
+  if (!navigationRef.isReady()) return;
+  navigationRef.navigate('AppStack', {
+    screen: 'BookingDetails',
+    params: { bookingId }
+  } as never);
+}

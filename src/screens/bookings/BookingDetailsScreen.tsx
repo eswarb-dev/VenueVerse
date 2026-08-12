@@ -1,30 +1,48 @@
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { format } from 'date-fns';
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, Image, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, AppState, Image, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { AppButton } from '@/components/AppButton';
+import { BookingProgressTracker } from '@/components/BookingProgressTracker';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorView } from '@/components/ErrorView';
 import { formatLocation } from '@/components/HallCard';
 import { LoadingView } from '@/components/LoadingView';
+import { ReceiptViewerModal } from '@/components/receipts/ReceiptViewerModal';
 import { StatusBadge } from '@/components/StatusBadge';
 import { colors, fontSizes, radius, shadows, spacing } from '@/constants/theme';
 import { AppStackParamList } from '@/navigation/types';
 import { cancelBooking, getBookingDetails } from '@/services/bookingService';
+import { debounceRealtimeRefresh, subscribeToBookingChanges } from '@/services/bookingRealtimeService';
+import { BookingReceipt, emailReceiptPdfCopy, generateBookingReceipt, getBookingReceipt } from '@/services/receiptService';
+import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/store/AuthContext';
 import { BookingDetails } from '@/types/venue';
 
 type Props = NativeStackScreenProps<AppStackParamList, 'BookingDetails'>;
 
 export function BookingDetailsScreen({ route, navigation }: Props) {
+  const { profile } = useAuth();
   const [booking, setBooking] = useState<BookingDetails | null>(null);
+  const [receipt, setReceipt] = useState<BookingReceipt | null>(null);
   const [loading, setLoading] = useState(true);
   const [cancelling, setCancelling] = useState(false);
+  const [receiptViewerVisible, setReceiptViewerVisible] = useState(false);
+  const [emailReceiptLoading, setEmailReceiptLoading] = useState(false);
+  const [emailPdfCopyLoading, setEmailPdfCopyLoading] = useState(false);
   const [error, setError] = useState('');
 
   const loadBooking = useCallback(async () => {
     setError('');
-    setBooking(await getBookingDetails(route.params.bookingId));
-  }, [route.params.bookingId]);
+    const nextBooking = await getBookingDetails(route.params.bookingId);
+    setBooking(nextBooking);
+    const canLoadReceipt = nextBooking?.requesterId === profile?.id || profile?.role === 'admin' || profile?.role === 'super_admin';
+    if (canLoadReceipt && (nextBooking?.status === 'approved' || nextBooking?.status === 'rejected' || nextBooking?.status === 'revoked')) {
+      setReceipt(await getBookingReceipt(nextBooking.id));
+    } else {
+      setReceipt(null);
+    }
+  }, [profile?.id, profile?.role, route.params.bookingId]);
 
   useEffect(() => {
     setLoading(true);
@@ -32,6 +50,33 @@ export function BookingDetailsScreen({ route, navigation }: Props) {
       .catch((loadError) => setError(loadError instanceof Error ? loadError.message : 'Unable to load booking details.'))
       .finally(() => setLoading(false));
   }, [loadBooking]);
+
+  useEffect(() => {
+    const refreshDetails = debounceRealtimeRefresh(() => {
+      void loadBooking().catch((loadError) => {
+        if (__DEV__) console.log('[realtime] booking details refresh failed', loadError);
+      });
+    });
+
+    const channel = subscribeToBookingChanges({
+      channelName: `bookings:details:${route.params.bookingId}`,
+      onChange: (_event, bookingId) => {
+        if (bookingId === route.params.bookingId) refreshDetails.schedule();
+      }
+    });
+
+    const appStateSubscription = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      if (__DEV__) console.log('[app-state] active refresh');
+      refreshDetails.schedule();
+    });
+
+    return () => {
+      refreshDetails.cancel();
+      appStateSubscription.remove();
+      supabase.removeChannel(channel);
+    };
+  }, [loadBooking, route.params.bookingId]);
 
   const onCancel = () => {
     if (!booking || booking.status !== 'pending') return;
@@ -58,9 +103,59 @@ export function BookingDetailsScreen({ route, navigation }: Props) {
     ]);
   };
 
+  const viewReceipt = async () => {
+    if (!receipt) return;
+    setReceiptViewerVisible(true);
+  };
+
+  const generateReceipt = async () => {
+    if (!booking) return;
+    try {
+      setEmailReceiptLoading(true);
+      await generateBookingReceipt(booking.id, { queueEmail: false });
+      setReceipt(await getBookingReceipt(booking.id));
+      Alert.alert('Receipt generated', 'The receipt is ready in VenueVerse.');
+    } catch (receiptError) {
+      setError(receiptError instanceof Error ? receiptError.message : 'Unable to generate receipt.');
+    } finally {
+      setEmailReceiptLoading(false);
+    }
+  };
+
+  const sendReceiptPdfCopy = async () => {
+    if (!receipt) return;
+    try {
+      setEmailPdfCopyLoading(true);
+      Alert.alert('Sending PDF...', 'Sending the receipt PDF copy to your email.');
+      await emailReceiptPdfCopy(receipt);
+      setReceipt(await getBookingReceipt(receipt.bookingId));
+      Alert.alert('PDF copy sent', 'PDF copy sent to your email.');
+    } catch (receiptError) {
+      Alert.alert('Failed to send PDF copy', receiptError instanceof Error ? receiptError.message : 'Failed to send PDF copy. Try again.');
+    } finally {
+      setEmailPdfCopyLoading(false);
+    }
+  };
+
   if (loading) return <LoadingView message="Loading booking details..." />;
   if (error && !booking) return <View style={styles.screen}><ErrorView message={error} onRetry={() => void loadBooking()} /></View>;
   if (!booking) return <View style={styles.screen}><EmptyState title="Booking not found" message="This request may no longer exist." /></View>;
+
+  const isOwner = booking.requesterId === profile?.id;
+  const isAdmin = profile?.role === 'admin';
+  const isSuperAdmin = profile?.role === 'super_admin';
+  const isSameRequesterDepartment = Boolean(profile?.department && booking.requester?.department === profile.department);
+  const canView = isOwner || isAdmin || isSuperAdmin || isSameRequesterDepartment;
+  const canCancel = isOwner && booking.status === 'pending';
+  const canUseReceiptActions = isOwner || isAdmin || isSuperAdmin;
+
+  if (!canView) {
+    return (
+      <View style={styles.screen}>
+        <EmptyState title="Access denied" message="You can view only your own bookings or bookings requested by users in your department." />
+      </View>
+    );
+  }
 
   return (
     <ScrollView style={styles.root} contentContainerStyle={styles.content}>
@@ -77,8 +172,16 @@ export function BookingDetailsScreen({ route, navigation }: Props) {
         </Text>
       </View>
 
+      <BookingProgressTracker status={booking.status} />
+
       <View style={styles.panel}>
         <Text style={styles.sectionTitle}>Event details</Text>
+        {booking.requester ? (
+          <DetailRow
+            label="Requester"
+            value={`${isOwner ? 'You' : booking.requester.fullName}${booking.requester.department ? ` • ${booking.requester.department}` : ''}`}
+          />
+        ) : null}
         <DetailRow label="Event type" value={booking.eventType} />
         <DetailRow label="Department" value={booking.department} />
         <DetailRow label="Faculty coordinator" value={booking.facultyCoordinator} />
@@ -97,15 +200,43 @@ export function BookingDetailsScreen({ route, navigation }: Props) {
         <Text style={styles.sectionTitle}>Approval information</Text>
         {booking.status === 'rejected' ? <DetailRow label="Admin remarks" value={booking.adminRemarks} emphasize /> : null}
         {booking.status === 'approved' ? <DetailRow label="Approved by" value={booking.approvedBy?.fullName ?? null} emphasize /> : null}
+        {booking.status === 'revoked' ? <DetailRow label="Revocation reason" value={booking.revocationReason} emphasize /> : null}
+        {booking.status === 'revoked' ? <DetailRow label="Revoked on" value={booking.revokedAt ? format(new Date(booking.revokedAt), 'dd MMM yyyy, h:mm a') : null} /> : null}
+        {booking.status === 'revoked' ? <DetailRow label="Revoked by" value={booking.revokedByDepartment ? `${booking.revokedByDepartment} Admin` : null} /> : null}
         <DetailRow label="Created" value={booking.createdAt ? format(new Date(booking.createdAt), 'dd MMM yyyy, h:mm a') : null} />
         <DetailRow label="Updated" value={booking.updatedAt ? format(new Date(booking.updatedAt), 'dd MMM yyyy, h:mm a') : null} />
       </View>
 
-      {booking.status === 'pending' ? (
+      {canUseReceiptActions && (booking.status === 'approved' || booking.status === 'rejected' || booking.status === 'revoked') ? (
+        <View style={styles.panel}>
+          <Text style={styles.sectionTitle}>Official receipt</Text>
+          {booking.status === 'revoked' ? <Text style={styles.revokedNotice}>This receipt is no longer valid because the booking has been revoked.</Text> : null}
+          {receipt ? (
+            <>
+              <DetailRow label="Receipt No" value={receipt.receiptNo} emphasize />
+              <DetailRow label="Email status" value={formatReceiptEmailStatus(receipt)} />
+              <AppButton title="View Receipt" onPress={viewReceipt} />
+              <AppButton title="Email PDF Copy" variant="secondary" loading={emailPdfCopyLoading} disabled={emailPdfCopyLoading} onPress={() => void sendReceiptPdfCopy()} />
+            </>
+          ) : (
+            <>
+              <Text style={styles.receiptHint}>Receipt is being generated. Please check again shortly.</Text>
+              {profile?.role === 'admin' ? (
+                <AppButton title="Generate Receipt" variant="secondary" loading={emailReceiptLoading} disabled={emailReceiptLoading} onPress={generateReceipt} />
+              ) : null}
+            </>
+          )}
+        </View>
+      ) : null}
+
+      {canCancel ? (
         <AppButton title="Cancel Booking" variant="secondary" loading={cancelling} disabled={cancelling} onPress={onCancel} />
       ) : (
-        <Text style={styles.lockedText}>Approved, rejected, cancelled, and completed bookings cannot be edited.</Text>
+        <Text style={styles.lockedText}>
+          {isOwner ? 'Approved, rejected, revoked, cancelled, and completed bookings cannot be edited.' : 'Department bookings are read-only unless you created them.'}
+        </Text>
       )}
+      <ReceiptViewerModal visible={receiptViewerVisible} receipt={receipt} onClose={() => setReceiptViewerVisible(false)} />
     </ScrollView>
   );
 }
@@ -117,6 +248,17 @@ function DetailRow({ label, value, emphasize }: { label: string; value: string |
       <Text style={[styles.detailValue, emphasize && styles.emphasizedValue]}>{value || 'Not provided'}</Text>
     </View>
   );
+}
+
+function formatReceiptEmailStatus(receipt: BookingReceipt) {
+  if (receipt.emailStatus === 'manual_sent') return `Manual PDF sent to ${receipt.emailedTo ?? 'requester'}`;
+  if (receipt.emailStatus === 'manual_failed') return receipt.emailError ? `Manual PDF failed: ${receipt.emailError}` : 'Manual PDF failed';
+  if (receipt.emailedAt) return `Sent to ${receipt.emailedTo ?? 'requester'}`;
+  if (receipt.emailStatus === 'not_requested') return 'Email not requested';
+  if (receipt.emailStatus === 'queued') return 'Email queued';
+  if (receipt.emailStatus === 'pending' || receipt.emailStatus === 'sending' || receipt.emailStatus === 'processing') return 'Email sending';
+  if (receipt.emailStatus === 'failed') return receipt.emailError ? `Email failed: ${receipt.emailError}` : 'Email failed';
+  return 'Email not sent';
 }
 
 const styles = StyleSheet.create({
@@ -187,6 +329,18 @@ const styles = StyleSheet.create({
   },
   emphasizedValue: {
     color: colors.primary
+  },
+  revokedNotice: {
+    color: colors.danger,
+    fontSize: fontSizes.sm,
+    fontWeight: '900',
+    lineHeight: 20
+  },
+  receiptHint: {
+    color: colors.textMuted,
+    fontSize: fontSizes.sm,
+    fontWeight: '700',
+    lineHeight: 20
   },
   lockedText: {
     color: colors.textMuted,

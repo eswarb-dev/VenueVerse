@@ -1,3 +1,5 @@
+import { VENUE_TYPES } from '@/constants/venueTypes';
+
 export const DEPARTMENT_OPTIONS = [
   'IT',
   'AI&DS',
@@ -11,8 +13,10 @@ export const DEPARTMENT_OPTIONS = [
   'NANO',
   'MECH',
   'EIE',
+  'R & A',
+  'MTech CSE',
   'Library',
-  'Others'
+  'Administration'
 ];
 
 export const REGISTRATION_DEPARTMENT_OPTIONS = DEPARTMENT_OPTIONS;
@@ -32,20 +36,10 @@ export const ACADEMIC_DEPARTMENTS = [
   'EIE'
 ];
 
-export const VENUE_TYPE_OPTIONS = ['Seminar Hall', 'Lab', 'Auditorium'];
+export const VENUE_TYPE_OPTIONS = [...VENUE_TYPES];
 
 export function getVenueTypeOptions(department: string) {
-  if (ACADEMIC_DEPARTMENTS.includes(department)) {
-    return ['All', 'Seminar Hall', 'Lab'];
-  }
-
-  if (department === 'Library') {
-    return ['All', 'Seminar Hall'];
-  }
-
-  if (department === 'Others') {
-    return ['All', 'Auditorium'];
-  }
-
-  return ['All', 'Seminar Hall', 'Lab', 'Auditorium'];
+  return ['All', ...VENUE_TYPES];
 }
+
+export { normalizeVenueType, VENUE_TYPES } from '@/constants/venueTypes';

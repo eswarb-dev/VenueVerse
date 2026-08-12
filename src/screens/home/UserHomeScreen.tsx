@@ -1,29 +1,50 @@
+import { CompositeScreenProps } from '@react-navigation/native';
+import { BottomTabScreenProps, useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import { format } from 'date-fns';
 import { useCallback, useEffect, useState } from 'react';
-import { Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { AppState, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppButton } from '@/components/AppButton';
+import { AppLogoMark } from '@/components/AppLogoMark';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorView } from '@/components/ErrorView';
 import { LoadingView } from '@/components/LoadingView';
+import { RejectReasonDialog } from '@/components/RejectReasonDialog';
 import { StatusBadge } from '@/components/StatusBadge';
 import { colors, fontSizes, radius, shadows, spacing } from '@/constants/theme';
+import { EXTRA_TAB_PADDING, TOP_SAFE_AREA_PADDING } from '@/constants/layout';
+import { normalizeVenueType } from '@/constants/venueTypes';
 import { useNotifications } from '@/hooks/useNotifications';
-import { AppStackParamList } from '@/navigation/types';
-import { getRecentUserBookings, getTodayBookedHalls, getUserBookingStats } from '@/services/bookingService';
+import { AppStackParamList, UserTabParamList } from '@/navigation/types';
+import { approveBookingRequest, getDepartmentPendingApprovalRequests, rejectBookingRequest } from '@/services/bookingApprovalService';
+import { getTodayBookedHalls, getUserBookingStats } from '@/services/bookingService';
+import { debounceRealtimeRefresh, subscribeToBookingChanges } from '@/services/bookingRealtimeService';
+import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/store/AuthContext';
-import { BookingPreview, BookingStats, TodayBookedHall } from '@/types/venue';
+import { BookingStats, DepartmentApprovalRequest, TodayBookedHall } from '@/types/venue';
 
-type Props = NativeStackScreenProps<AppStackParamList, 'Home'>;
+const VENUEVERSE_SUPER_ADMIN_EMAIL = 'venueverse.srec@gmail.com';
+
+type Props = CompositeScreenProps<
+  BottomTabScreenProps<UserTabParamList, 'Home'>,
+  NativeStackScreenProps<AppStackParamList>
+>;
 
 export function UserHomeScreen({ navigation }: Props) {
+  const tabBarHeight = useBottomTabBarHeight();
+  const insets = useSafeAreaInsets();
   const { profile, user } = useAuth();
   const { unreadCount, fetchUnreadCount } = useNotifications();
   const canUseAdminArea = profile?.role === 'admin' || profile?.role === 'super_admin';
+  const isVenueVerseAccount = isVenueVerseEmail(profile?.email);
   const [stats, setStats] = useState<BookingStats>({ pending: 0, approved: 0, rejected: 0 });
-  const [recentBookings, setRecentBookings] = useState<BookingPreview[]>([]);
   const [todayBookedHalls, setTodayBookedHalls] = useState<TodayBookedHall[]>([]);
+  const [approvalRequests, setApprovalRequests] = useState<DepartmentApprovalRequest[]>([]);
+  const [approvalModalVisible, setApprovalModalVisible] = useState(false);
+  const [reviewingBookingId, setReviewingBookingId] = useState<string | null>(null);
+  const [rejectRequest, setRejectRequest] = useState<DepartmentApprovalRequest | null>(null);
   const [todayBookingsLoading, setTodayBookingsLoading] = useState(true);
   const [todayBookingsError, setTodayBookingsError] = useState('');
   const [todayModalVisible, setTodayModalVisible] = useState(false);
@@ -31,30 +52,32 @@ export function UserHomeScreen({ navigation }: Props) {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
 
-  const loadHome = useCallback(async () => {
+  const loadTodayBookedHalls = useCallback(async () => {
+    setTodayBookingsError('');
+    setTodayBookingsLoading(true);
+    try {
+      setTodayBookedHalls(await getTodayBookedHalls());
+    } catch (todayError) {
+      setTodayBookingsError(todayError instanceof Error ? todayError.message : 'Failed to load today\'s booked halls.');
+      setTodayBookedHalls([]);
+    } finally {
+      setTodayBookingsLoading(false);
+    }
+  }, []);
+
+  const loadHome = useCallback(async (forceRefresh = false, includeToday = true) => {
     const userId = profile?.id ?? user?.id;
     if (!userId) return;
 
     setError('');
-    setTodayBookingsError('');
-    setTodayBookingsLoading(true);
-    try {
-      const [nextStats, nextRecentBookings, nextTodayBookedHalls] = await Promise.all([
-        getUserBookingStats(userId),
-        getRecentUserBookings(userId),
-        getTodayBookedHalls().catch((todayError) => {
-          setTodayBookingsError(todayError instanceof Error ? todayError.message : 'Failed to load today\'s booked halls.');
-          return [];
-        }),
-        fetchUnreadCount()
-      ]);
-      setStats(nextStats);
-      setRecentBookings(nextRecentBookings);
-      setTodayBookedHalls(nextTodayBookedHalls);
-    } finally {
-      setTodayBookingsLoading(false);
-    }
-  }, [fetchUnreadCount, profile?.id, user?.id]);
+    const [nextStats, nextApprovalRequests] = await Promise.all([
+      getUserBookingStats(userId, { forceRefresh }),
+      profile?.role === 'admin' ? getDepartmentPendingApprovalRequests().catch(() => []) : Promise.resolve([])
+    ]);
+    setStats(nextStats);
+    setApprovalRequests(nextApprovalRequests);
+    if (includeToday) void loadTodayBookedHalls();
+  }, [loadTodayBookedHalls, profile?.id, profile?.role, user?.id]);
 
   useEffect(() => {
     setLoading(true);
@@ -63,14 +86,68 @@ export function UserHomeScreen({ navigation }: Props) {
       .finally(() => setLoading(false));
   }, [loadHome]);
 
+  useEffect(() => {
+    const userId = profile?.id ?? user?.id;
+    if (!userId) return;
+
+    const refreshHome = debounceRealtimeRefresh(() => {
+      void loadHome(true, false).catch((loadError) => {
+        if (__DEV__) console.log('[realtime] home refresh failed', loadError);
+      });
+    });
+
+    const channel = subscribeToBookingChanges({
+      channelName: `bookings:home:${userId}`,
+      onChange: () => refreshHome.schedule()
+    });
+
+    const appStateSubscription = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      if (__DEV__) console.log('[app-state] active refresh');
+      refreshHome.schedule();
+    });
+
+    return () => {
+      refreshHome.cancel();
+      appStateSubscription.remove();
+      supabase.removeChannel(channel);
+    };
+  }, [loadHome, profile?.id, user?.id]);
+
   const onRefresh = async () => {
     setRefreshing(true);
     try {
-      await loadHome();
+      await Promise.all([loadHome(true, false), loadTodayBookedHalls()]);
     } catch (refreshError) {
       setError(refreshError instanceof Error ? refreshError.message : 'Unable to refresh dashboard.');
     } finally {
       setRefreshing(false);
+    }
+  };
+
+  const reviewRequest = async (request: DepartmentApprovalRequest, action: 'approve' | 'reject', rejectionReason?: string) => {
+    setReviewingBookingId(request.id);
+    try {
+      if (action === 'approve') {
+        await approveBookingRequest({
+          bookingId: request.id,
+          requesterId: request.requesterId,
+          eventTitle: request.eventTitle
+        });
+      } else {
+        await rejectBookingRequest({
+          bookingId: request.id,
+          remarks: rejectionReason ?? '',
+          requesterId: request.requesterId,
+          eventTitle: request.eventTitle
+        });
+      }
+      await loadHome();
+      setRejectRequest(null);
+    } catch (reviewError) {
+      setError(reviewError instanceof Error ? reviewError.message : 'Unable to review booking request.');
+    } finally {
+      setReviewingBookingId(null);
     }
   };
 
@@ -79,7 +156,13 @@ export function UserHomeScreen({ navigation }: Props) {
   return (
     <ScrollView
       style={styles.root}
-      contentContainerStyle={styles.content}
+      contentContainerStyle={[
+        styles.content,
+        {
+          paddingTop: insets.top + TOP_SAFE_AREA_PADDING,
+          paddingBottom: tabBarHeight + EXTRA_TAB_PADDING
+        }
+      ]}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
     >
       <Pressable
@@ -88,7 +171,16 @@ export function UserHomeScreen({ navigation }: Props) {
         style={({ pressed }) => [styles.hero, pressed && styles.heroPressed]}
       >
         <View style={styles.heroText}>
-          <Text style={styles.eyebrow}>Welcome</Text>
+          <View style={styles.heroBrandRow}>
+            {isVenueVerseAccount ? (
+              <AppLogoMark size={34} contained={false} />
+            ) : (
+              <View style={styles.heroAvatar}>
+                <Text style={styles.heroAvatarText}>{getInitial(profile?.fullName)}</Text>
+              </View>
+            )}
+            <Text style={styles.eyebrow}>Welcome</Text>
+          </View>
           <Text style={styles.title}>{profile?.fullName ?? 'Campus Member'}</Text>
           <Text style={styles.subtitle}>Manage venue requests and stay current with approvals.</Text>
           <Text style={styles.profileHint}>Tap to view profile</Text>
@@ -114,7 +206,39 @@ export function UserHomeScreen({ navigation }: Props) {
         <StatCard label="Rejected" value={stats.rejected} color={colors.status.rejected} />
       </View>
 
-      <AppButton title="Book a Venue" onPress={() => navigation.navigate('Halls')} />
+      {profile?.role === 'admin' && approvalRequests.length > 0 ? (
+        <PendingApprovalRequestsCard
+          requests={approvalRequests}
+          reviewingBookingId={reviewingBookingId}
+          onApprove={(request) => reviewRequest(request, 'approve')}
+          onReject={setRejectRequest}
+          onViewAll={() => setApprovalModalVisible(true)}
+        />
+      ) : null}
+
+      <PendingApprovalRequestsModal
+        visible={profile?.role === 'admin' && approvalModalVisible}
+        requests={approvalRequests}
+        reviewingBookingId={reviewingBookingId}
+        onApprove={(request) => reviewRequest(request, 'approve')}
+        onReject={setRejectRequest}
+        onClose={() => setApprovalModalVisible(false)}
+      />
+
+      <RejectReasonDialog
+        visible={Boolean(rejectRequest)}
+        eventTitle={rejectRequest?.eventTitle}
+        venueName={rejectRequest?.hallName}
+        loading={Boolean(rejectRequest && reviewingBookingId === rejectRequest.id)}
+        onCancel={() => {
+          if (!reviewingBookingId) setRejectRequest(null);
+        }}
+        onSubmit={(reason) => {
+          if (rejectRequest) void reviewRequest(rejectRequest, 'reject', reason);
+        }}
+      />
+
+      <AppButton title="Book a Venue" onPress={() => navigation.navigate('Book')} />
 
       <TodayBookedHallsSummary
         count={todayBookedHalls.length}
@@ -131,6 +255,8 @@ export function UserHomeScreen({ navigation }: Props) {
         onClose={() => setTodayModalVisible(false)}
       />
 
+      <VenueScheduleSummary onPress={() => navigation.navigate('VenueSchedule')} />
+
       {canUseAdminArea ? (
         <View style={styles.adminCard}>
           <View style={styles.adminCopy}>
@@ -141,21 +267,135 @@ export function UserHomeScreen({ navigation }: Props) {
           <AppButton title="Open Admin Area" variant="secondary" onPress={() => navigation.navigate('AdminArea')} />
         </View>
       ) : null}
-
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Recent bookings</Text>
-        <Pressable onPress={() => navigation.navigate('Bookings')}>
-          <Text style={styles.sectionLink}>View all</Text>
-        </Pressable>
-      </View>
-
-      {recentBookings.length === 0 ? (
-        <EmptyState title="No recent bookings" message="Your venue requests will appear here once submitted." />
-      ) : (
-        recentBookings.map((booking) => <RecentBookingCard key={booking.id} booking={booking} />)
-      )}
     </ScrollView>
   );
+}
+
+function PendingApprovalRequestsCard({
+  requests,
+  reviewingBookingId,
+  onApprove,
+  onReject,
+  onViewAll
+}: {
+  requests: DepartmentApprovalRequest[];
+  reviewingBookingId: string | null;
+  onApprove: (request: DepartmentApprovalRequest) => void;
+  onReject: (request: DepartmentApprovalRequest) => void;
+  onViewAll: () => void;
+}) {
+  const visibleRequests = requests.slice(0, 2);
+
+  return (
+    <View style={styles.approvalCard}>
+      <View style={styles.approvalHeader}>
+        <View style={styles.approvalHeaderCopy}>
+          <Text style={styles.approvalEyebrow}>Department Requests</Text>
+          <Text style={styles.sectionTitle}>Pending Approval Requests</Text>
+          <Text style={styles.infoText}>{requests.length} {requests.length === 1 ? 'request needs' : 'requests need'} your action</Text>
+        </View>
+        {requests.length > 2 ? (
+          <Pressable onPress={onViewAll} style={styles.viewAllButton}>
+            <Text style={styles.sectionLink}>View all</Text>
+          </Pressable>
+        ) : null}
+      </View>
+      {visibleRequests.map((request) => (
+        <ApprovalRequestCard
+          key={request.id}
+          request={request}
+          reviewing={reviewingBookingId === request.id}
+          onApprove={() => onApprove(request)}
+          onReject={() => onReject(request)}
+        />
+      ))}
+    </View>
+  );
+}
+
+function PendingApprovalRequestsModal({
+  visible,
+  requests,
+  reviewingBookingId,
+  onApprove,
+  onReject,
+  onClose
+}: {
+  visible: boolean;
+  requests: DepartmentApprovalRequest[];
+  reviewingBookingId: string | null;
+  onApprove: (request: DepartmentApprovalRequest) => void;
+  onReject: (request: DepartmentApprovalRequest) => void;
+  onClose: () => void;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={styles.modalBackdrop} onPress={onClose}>
+        <Pressable style={styles.todaySheet}>
+          <View style={styles.todaySheetHeader}>
+            <Text style={styles.todaySheetTitle}>Pending Approval Requests</Text>
+            <Pressable accessibilityRole="button" onPress={onClose} style={styles.closeButton}>
+              <Text style={styles.closeText}>Close</Text>
+            </Pressable>
+          </View>
+          <ScrollView style={styles.todaySheetList} contentContainerStyle={styles.todaySheetListContent}>
+            {requests.map((request) => (
+              <ApprovalRequestCard
+                key={request.id}
+                request={request}
+                reviewing={reviewingBookingId === request.id}
+                onApprove={() => onApprove(request)}
+                onReject={() => onReject(request)}
+              />
+            ))}
+          </ScrollView>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+function ApprovalRequestCard({
+  request,
+  reviewing,
+  onApprove,
+  onReject
+}: {
+  request: DepartmentApprovalRequest;
+  reviewing: boolean;
+  onApprove: () => void;
+  onReject: () => void;
+}) {
+  return (
+    <View style={styles.approvalRequestCard}>
+      <View style={styles.bookingHeader}>
+        <Text style={styles.bookingTitle}>{request.eventTitle}</Text>
+        <StatusBadge status={request.status} />
+      </View>
+      <Text style={styles.approvalRoute}>
+        {`${request.requesterDepartment ?? 'Requester'} -> ${request.hallName ?? 'Venue'}`}
+      </Text>
+      <Text style={styles.bookingMeta}>Venue department: {request.hallDepartment ?? 'Not set'}</Text>
+      <Text style={styles.bookingMeta}>Requester: {request.requesterName ?? 'Unknown requester'}</Text>
+      <Text style={styles.todayTime}>{formatRecentBookingTime(request.startTime, request.endTime)}</Text>
+      <View style={styles.approvalActions}>
+        <View style={styles.approvalActionButton}>
+          <AppButton title="Approve" loading={reviewing} disabled={reviewing} onPress={onApprove} />
+        </View>
+        <View style={styles.approvalActionButton}>
+          <AppButton title="Reject" variant="secondary" loading={reviewing} disabled={reviewing} onPress={onReject} />
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function isVenueVerseEmail(email?: string | null) {
+  return email?.trim().toLowerCase() === VENUEVERSE_SUPER_ADMIN_EMAIL;
+}
+
+function getInitial(name?: string | null) {
+  return name?.trim().charAt(0).toUpperCase() || 'V';
 }
 
 function StatCard({ label, value, color }: { label: string; value: number; color: string }) {
@@ -163,19 +403,6 @@ function StatCard({ label, value, color }: { label: string; value: number; color
     <View style={styles.statCard}>
       <Text style={[styles.statValue, { color }]}>{value}</Text>
       <Text style={styles.statLabel}>{label}</Text>
-    </View>
-  );
-}
-
-function RecentBookingCard({ booking }: { booking: BookingPreview }) {
-  return (
-    <View style={styles.bookingCard}>
-      <View style={styles.bookingHeader}>
-        <Text style={styles.bookingTitle}>{booking.eventTitle}</Text>
-        <StatusBadge status={booking.status} />
-      </View>
-      <Text style={styles.bookingMeta}>{booking.hallName ?? 'Venue pending'}</Text>
-      <Text style={styles.bookingMeta}>{formatRecentBookingTime(booking.startTime, booking.endTime)}</Text>
     </View>
   );
 }
@@ -263,6 +490,21 @@ function TodayBookedHallsModal({
   );
 }
 
+function VenueScheduleSummary({ onPress }: { onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.todaySummaryCard, pressed && styles.pressedCard]}>
+      <View style={styles.todaySummaryHeader}>
+        <View style={styles.todaySummaryCopy}>
+          <Text style={styles.sectionTitle}>Venue Schedule</Text>
+          <Text style={styles.infoText}>Choose a date to view booked venues</Text>
+        </View>
+        <Ionicons name="calendar-number-outline" size={24} color={colors.primary} />
+      </View>
+      <Text style={styles.todaySummaryAction}>View schedule</Text>
+    </Pressable>
+  );
+}
+
 function TodayBookedHallCard({ booking }: { booking: TodayBookedHall }) {
   const displayName = getTodayBookedHallDisplayName(booking);
 
@@ -288,9 +530,10 @@ function formatRecentBookingTime(startTime: string, endTime: string) {
 }
 
 function getTodayBookedHallDisplayName(booking: TodayBookedHall) {
+  const venueType = normalizeVenueType(booking.venueType);
   if (booking.department === 'Library') return 'Library Seminar Hall';
-  if (booking.department === 'Others' && booking.venueType === 'Auditorium') return 'Others Auditorium';
-  if (booking.department && booking.venueType) return `${booking.department} ${booking.venueType}`;
+  if (booking.department === 'Others' && venueType === 'Auditorium') return 'Others Auditorium';
+  if (booking.department && venueType) return `${booking.department} ${venueType}`;
   return booking.hallName;
 }
 
@@ -308,7 +551,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: spacing.md,
     backgroundColor: colors.primary,
-    borderRadius: radius.xl,
+    borderRadius: 18,
     padding: spacing.lg,
     ...shadows.card
   },
@@ -319,31 +562,50 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: spacing.xs
   },
+  heroBrandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm
+  },
+  heroAvatar: {
+    width: 34,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 17,
+    backgroundColor: colors.surface
+  },
+  heroAvatarText: {
+    color: colors.primary,
+    fontSize: fontSizes.md,
+    fontWeight: '900'
+  },
   eyebrow: {
-    color: colors.onPrimaryMuted,
+    color: colors.surface,
     fontSize: fontSizes.xs,
-    fontWeight: '900',
+    fontWeight: '700',
+    opacity: 0.85,
     textTransform: 'uppercase'
   },
   title: {
     color: colors.surface,
     fontSize: fontSizes.xl,
-    fontWeight: '900'
+    fontWeight: '800'
   },
   subtitle: {
-    color: colors.onPrimarySubtle,
+    color: '#D7E7F7',
     fontSize: fontSizes.sm,
     lineHeight: 20
   },
   profileHint: {
-    color: colors.onPrimaryMuted,
+    color: colors.surface,
     fontSize: fontSizes.xs,
-    fontWeight: '800',
+    fontWeight: '700',
     marginTop: spacing.xs
   },
   notificationButton: {
-    width: 48,
-    height: 48,
+    width: 42,
+    height: 42,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: radius.pill,
@@ -395,6 +657,59 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     ...shadows.card
   },
+  approvalCard: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderLeftWidth: 4,
+    borderColor: colors.borderSoft,
+    borderLeftColor: colors.status.pending,
+    borderRadius: radius.lg,
+    gap: spacing.md,
+    padding: spacing.md,
+    ...shadows.card
+  },
+  approvalHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: spacing.md
+  },
+  approvalHeaderCopy: {
+    flex: 1,
+    gap: spacing.xs
+  },
+  approvalEyebrow: {
+    color: colors.status.pending,
+    fontSize: fontSizes.xs,
+    fontWeight: '900',
+    textTransform: 'uppercase'
+  },
+  viewAllButton: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs
+  },
+  approvalRequestCard: {
+    backgroundColor: colors.surfaceMuted,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    borderRadius: radius.md,
+    gap: spacing.xs,
+    padding: spacing.md
+  },
+  approvalRoute: {
+    color: colors.primary,
+    fontSize: fontSizes.sm,
+    fontWeight: '900',
+    lineHeight: 20
+  },
+  approvalActions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.sm
+  },
+  approvalActionButton: {
+    flex: 1
+  },
   adminCopy: {
     gap: spacing.xs
   },
@@ -414,11 +729,6 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.sm,
     fontWeight: '600',
     lineHeight: 20
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center'
   },
   sectionTitle: {
     color: colors.text,
@@ -524,7 +834,7 @@ const styles = StyleSheet.create({
   modalBackdrop: {
     flex: 1,
     justifyContent: 'flex-end',
-    backgroundColor: 'rgba(16, 24, 40, 0.35)'
+    backgroundColor: colors.overlay
   },
   todaySheet: {
     maxHeight: '82%',

@@ -1,8 +1,9 @@
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { AppButton } from '@/components/AppButton';
 import { AppTextInput } from '@/components/AppTextInput';
+import { DEPARTMENT_OPTIONS } from '@/constants/departments';
 import { colors, fontSizes, radius, spacing } from '@/constants/theme';
 import { AdminStackParamList } from '@/navigation/types';
 import { createAdminUser } from '@/services/profileService';
@@ -19,25 +20,6 @@ type FormState = {
 };
 type FormErrors = Partial<Record<keyof FormState, string>>;
 
-const roles: UserRole[] = ['user', 'admin', 'super_admin'];
-const addUserDepartmentOptions = [
-  'IT',
-  'AI&DS',
-  'EEE',
-  'ECE',
-  'BME',
-  'CSE',
-  'CIVIL',
-  'AERO',
-  'MBA',
-  'NANO',
-  'MECH',
-  'EIE',
-  'CDPD',
-  'Library',
-  'Others'
-];
-
 const initialForm: FormState = {
   fullName: '',
   email: '',
@@ -51,50 +33,51 @@ export function AddUserScreen({ navigation }: Props) {
   const [form, setForm] = useState<FormState>(initialForm);
   const [errors, setErrors] = useState<FormErrors>({});
   const [loading, setLoading] = useState(false);
-  const [roleOpen, setRoleOpen] = useState(false);
-  const [departmentOpen, setDepartmentOpen] = useState(false);
-  const [passwordVisible, setPasswordVisible] = useState(false);
   const [screenError, setScreenError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
 
-  const canCreateUsers = profile?.role === 'super_admin';
+  const adminDepartment = profile?.department ?? '';
+  const isSuperAdmin = profile?.role === 'super_admin';
+  const canCreateUsers = isSuperAdmin || (profile?.role === 'admin' && Boolean(adminDepartment));
+
+  useEffect(() => {
+    if (isSuperAdmin) return;
+    if (adminDepartment) {
+      setForm((current) => ({ ...current, department: adminDepartment, role: 'user' }));
+    }
+  }, [adminDepartment, isSuperAdmin]);
 
   const update = (key: keyof FormState) => (value: string) => {
     setForm((current) => ({ ...current, [key]: value }));
     setErrors((current) => ({ ...current, [key]: undefined }));
-  };
-
-  const selectRole = (role: UserRole) => {
-    setForm((current) => ({ ...current, role }));
-    setErrors((current) => ({ ...current, role: undefined }));
-    setRoleOpen(false);
-  };
-
-  const selectDepartment = (department: string) => {
-    setForm((current) => ({ ...current, department }));
-    setErrors((current) => ({ ...current, department: undefined }));
-    setDepartmentOpen(false);
+    setSuccessMessage('');
   };
 
   const onGeneratePassword = () => {
     const password = generateTemporaryPassword();
     setForm((current) => ({ ...current, temporaryPassword: password }));
     setErrors((current) => ({ ...current, temporaryPassword: undefined }));
-    setPasswordVisible(true);
   };
 
   const onSubmit = async () => {
-    const nextErrors = validateForm(form);
+    const scopedForm = isSuperAdmin ? form : { ...form, department: adminDepartment, role: 'user' as UserRole };
+    const nextErrors = validateForm(scopedForm);
     setErrors(nextErrors);
     setScreenError('');
+    setSuccessMessage('');
 
     if (Object.keys(nextErrors).length > 0) return;
 
     try {
       setLoading(true);
-      await createAdminUser(form);
+      const result = await createAdminUser(scopedForm);
+      const createdName = result.user?.full_name ?? scopedForm.fullName.trim();
+      setForm({ ...initialForm, department: isSuperAdmin ? '' : adminDepartment, role: 'user' });
+      setErrors({});
+      setSuccessMessage(result.message || `${createdName} has been added successfully.`);
       Alert.alert(
-        'User created',
-        'User created successfully. Share the temporary password with the user securely.',
+        'User Created',
+        result.message || `${createdName} has been added successfully.`,
         [{ text: 'OK', onPress: () => navigation.goBack() }]
       );
     } catch (error) {
@@ -108,7 +91,7 @@ export function AddUserScreen({ navigation }: Props) {
     return (
       <View style={styles.screen}>
         <Text style={styles.deniedTitle}>Access denied.</Text>
-        <Text style={styles.deniedMessage}>Only super_admin users can create new accounts.</Text>
+        <Text style={styles.deniedMessage}>Only admins with an assigned department can create new accounts.</Text>
       </View>
     );
   }
@@ -116,6 +99,15 @@ export function AddUserScreen({ navigation }: Props) {
   return (
     <ScrollView style={styles.root} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
       {screenError ? <Text style={styles.banner}>{screenError}</Text> : null}
+      {successMessage ? (
+        <View style={styles.successCard}>
+          <Text style={styles.successTitle}>User Created</Text>
+          <Text style={styles.successMessage}>{successMessage}</Text>
+          <Pressable accessibilityRole="button" onPress={() => navigation.goBack()} style={({ pressed }) => [styles.successButton, pressed && styles.pressed]}>
+            <Text style={styles.successButtonText}>Back to Users</Text>
+          </Pressable>
+        </View>
+      ) : null}
 
       <View style={styles.card}>
         <AppTextInput
@@ -133,53 +125,38 @@ export function AddUserScreen({ navigation }: Props) {
           onChangeText={update('email')}
           error={errors.email}
         />
-        <View style={styles.passwordRow}>
-          <View style={styles.passwordInput}>
-            <AppTextInput
-              label="Temporary password"
-              value={form.temporaryPassword}
-              onChangeText={update('temporaryPassword')}
-              secureTextEntry={!passwordVisible}
-              error={errors.temporaryPassword}
-            />
-          </View>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => setPasswordVisible((current) => !current)}
-            style={({ pressed }) => [styles.smallButton, pressed && styles.pressed]}
-          >
-            <Text style={styles.smallButtonText}>{passwordVisible ? 'Hide' : 'Show'}</Text>
-          </Pressable>
-        </View>
+        <AppTextInput
+          label="Temporary password"
+          value={form.temporaryPassword}
+          onChangeText={update('temporaryPassword')}
+          isPassword
+          error={errors.temporaryPassword}
+        />
         <AppButton title="Generate Password" variant="secondary" disabled={loading} onPress={onGeneratePassword} />
 
-        <Dropdown
-          label="Role"
-          value={form.role}
-          placeholder="Select role"
-          open={roleOpen}
-          error={errors.role}
-          options={roles}
-          onToggle={() => {
-            setRoleOpen((current) => !current);
-            setDepartmentOpen(false);
-          }}
-          onSelect={(value) => selectRole(value as UserRole)}
-        />
-
-        <Dropdown
-          label="Department"
-          value={form.department}
-          placeholder="Select department"
-          open={departmentOpen}
-          error={errors.department}
-          options={addUserDepartmentOptions}
-          onToggle={() => {
-            setDepartmentOpen((current) => !current);
-            setRoleOpen(false);
-          }}
-          onSelect={selectDepartment}
-        />
+        {isSuperAdmin ? (
+          <>
+            <ChoiceField
+              label="Role"
+              options={getRoleOptions(form.email)}
+              value={form.role}
+              error={errors.role}
+              onSelect={(role) => update('role')(role)}
+            />
+            <ChoiceField
+              label="Department"
+              options={DEPARTMENT_OPTIONS}
+              value={form.department}
+              error={errors.department}
+              onSelect={update('department')}
+            />
+          </>
+        ) : (
+          <>
+            <ReadOnlyField label="Role" value="User" />
+            <ReadOnlyField label="Department" value={adminDepartment} error={errors.department} />
+          </>
+        )}
       </View>
 
       <AppButton title="Create User" loading={loading} disabled={loading} onPress={onSubmit} />
@@ -187,54 +164,53 @@ export function AddUserScreen({ navigation }: Props) {
   );
 }
 
-function Dropdown({
+function ReadOnlyField({
   label,
   value,
-  placeholder,
-  open,
-  error,
-  options,
-  onToggle,
-  onSelect
+  error
 }: {
   label: string;
   value: string;
-  placeholder: string;
-  open: boolean;
   error?: string;
+}) {
+  return (
+    <View style={styles.dropdownWrap}>
+      <Text style={styles.label}>{label}</Text>
+      <View style={[styles.dropdownButton, styles.readOnlyField, error ? styles.dropdownError : null]}>
+        <Text style={styles.dropdownValue}>{value || 'Not assigned'}</Text>
+      </View>
+      {error ? <Text style={styles.fieldError}>{error}</Text> : null}
+    </View>
+  );
+}
+
+function ChoiceField({
+  label,
+  options,
+  value,
+  error,
+  onSelect
+}: {
+  label: string;
   options: string[];
-  onToggle: () => void;
+  value: string;
+  error?: string;
   onSelect: (value: string) => void;
 }) {
   return (
     <View style={styles.dropdownWrap}>
       <Text style={styles.label}>{label}</Text>
-      <Pressable
-        accessibilityRole="button"
-        onPress={onToggle}
-        style={[styles.dropdownButton, error ? styles.dropdownError : null]}
-      >
-        <Text style={[styles.dropdownValue, !value && styles.placeholder]}>{value || placeholder}</Text>
-        <Text style={styles.chevron}>{open ? '^' : 'v'}</Text>
-      </Pressable>
-      {open ? (
-        <View style={styles.dropdownMenu}>
-          {options.map((option) => {
-            const active = value === option;
-            return (
-              <Pressable
-                key={option}
-                onPress={() => onSelect(option)}
-                style={[styles.dropdownOption, active && styles.dropdownOptionActive]}
-              >
-                <Text style={[styles.dropdownOptionText, active && styles.dropdownOptionTextActive]}>
-                  {formatOptionLabel(option)}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-      ) : null}
+      <View style={styles.choiceRow}>
+        {options.map((option) => (
+          <Pressable
+            key={option}
+            onPress={() => onSelect(option)}
+            style={[styles.choiceChip, value === option && styles.choiceChipActive]}
+          >
+            <Text style={[styles.choiceText, value === option && styles.choiceTextActive]}>{formatChoice(option)}</Text>
+          </Pressable>
+        ))}
+      </View>
       {error ? <Text style={styles.fieldError}>{error}</Text> : null}
     </View>
   );
@@ -247,7 +223,7 @@ function validateForm(form: FormState): FormErrors {
   if (!form.fullName.trim()) errors.fullName = 'Full name is required';
   if (!email) {
     errors.email = 'College email is required';
-  } else if (!email.endsWith('@srec.ac.in')) {
+  } else if (!isAllowedAccountEmail(email)) {
     errors.email = 'Use official college email ending with @srec.ac.in';
   }
 
@@ -258,9 +234,27 @@ function validateForm(form: FormState): FormErrors {
   }
 
   if (!form.role) errors.role = 'Please select a role';
+  if (form.role === 'super_admin' && email !== 'venueverse.srec@gmail.com') {
+    errors.email = 'Only venueverse.srec@gmail.com can be Super Admin';
+  }
   if (!form.department) errors.department = 'Please select a department';
 
   return errors;
+}
+
+function getRoleOptions(email: string): UserRole[] {
+  return email.trim().toLowerCase() === 'venueverse.srec@gmail.com'
+    ? ['user', 'admin', 'super_admin']
+    : ['user', 'admin'];
+}
+
+function isAllowedAccountEmail(email: string) {
+  return email.endsWith('@srec.ac.in') || email === 'venueverse.srec@gmail.com';
+}
+
+function formatChoice(value: string) {
+  if (value === 'super_admin') return 'Super Admin';
+  return value === 'admin' ? 'Admin' : value === 'user' ? 'User' : value;
 }
 
 function generateTemporaryPassword() {
@@ -281,10 +275,6 @@ function generateTemporaryPassword() {
   }
 
   return seed.sort(() => Math.random() - 0.5).join('');
-}
-
-function formatOptionLabel(value: string) {
-  return value.replace('_', ' ');
 }
 
 const styles = StyleSheet.create({
@@ -321,6 +311,37 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     padding: spacing.md
   },
+  successCard: {
+    backgroundColor: '#EAF7EF',
+    borderColor: '#B7E2C7',
+    borderWidth: 1,
+    borderRadius: radius.md,
+    gap: spacing.sm,
+    padding: spacing.md
+  },
+  successTitle: {
+    color: colors.success,
+    fontSize: fontSizes.md,
+    fontWeight: '900'
+  },
+  successMessage: {
+    color: colors.text,
+    fontSize: fontSizes.sm,
+    fontWeight: '700',
+    lineHeight: 20
+  },
+  successButton: {
+    alignSelf: 'flex-start',
+    borderRadius: radius.md,
+    backgroundColor: colors.success,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm
+  },
+  successButtonText: {
+    color: colors.surface,
+    fontSize: fontSizes.sm,
+    fontWeight: '900'
+  },
   deniedTitle: {
     color: colors.text,
     fontSize: fontSizes.lg,
@@ -333,14 +354,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginTop: spacing.sm,
     textAlign: 'center'
-  },
-  passwordRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: spacing.sm
-  },
-  passwordInput: {
-    flex: 1
   },
   smallButton: {
     minHeight: 50,
@@ -380,6 +393,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: spacing.md
   },
+  readOnlyField: {
+    backgroundColor: colors.surfaceMuted
+  },
   dropdownError: {
     borderColor: colors.status.rejected
   },
@@ -390,8 +406,33 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textTransform: 'none'
   },
+  choiceRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm
+  },
+  choiceChip: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    backgroundColor: colors.surface
+  },
+  choiceChipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary
+  },
+  choiceText: {
+    color: colors.textMuted,
+    fontSize: fontSizes.sm,
+    fontWeight: '800'
+  },
+  choiceTextActive: {
+    color: colors.surface
+  },
   placeholder: {
-    color: '#98A2B3'
+    color: colors.placeholder
   },
   chevron: {
     color: colors.textMuted,

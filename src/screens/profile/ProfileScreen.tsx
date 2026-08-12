@@ -1,22 +1,34 @@
+import { Ionicons } from '@expo/vector-icons';
+import { CompositeScreenProps } from '@react-navigation/native';
+import { BottomTabScreenProps, useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppButton } from '@/components/AppButton';
+import { AboutCard } from '@/components/AboutCard';
 import { EmptyState } from '@/components/EmptyState';
 import { LoadingView } from '@/components/LoadingView';
 import { colors, fontSizes, radius, shadows, spacing } from '@/constants/theme';
-import { AppStackParamList } from '@/navigation/types';
+import { EXTRA_TAB_PADDING, TOP_SAFE_AREA_PADDING } from '@/constants/layout';
+import { AppStackParamList, UserTabParamList } from '@/navigation/types';
 import { useAuth } from '@/store/AuthContext';
+import { UserRole } from '@/types/auth';
 
-type Props = NativeStackScreenProps<AppStackParamList, 'Profile'>;
+type Props = CompositeScreenProps<
+  BottomTabScreenProps<UserTabParamList, 'Profile'>,
+  NativeStackScreenProps<AppStackParamList>
+>;
 
 export function ProfileScreen({ navigation }: Props) {
+  const tabBarHeight = useBottomTabBarHeight();
+  const insets = useSafeAreaInsets();
   const { profile, loading, logout } = useAuth();
   const [loggingOut, setLoggingOut] = useState(false);
   const [logoutError, setLogoutError] = useState('');
 
   const confirmLogout = () => {
-    Alert.alert('Log out?', 'Are you sure you want to log out of this account?', [
+    Alert.alert('Log out', 'Are you sure you want to log out?', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Log Out',
@@ -47,61 +59,119 @@ export function ProfileScreen({ navigation }: Props) {
   }
 
   return (
-    <ScrollView style={styles.root} contentContainerStyle={styles.content}>
-      <View style={styles.summaryCard}>
-        <Text style={styles.name}>{profile.fullName}</Text>
-        <Text style={styles.email}>{profile.email}</Text>
+    <ScrollView
+      style={styles.root}
+      contentContainerStyle={[
+        styles.content,
+        {
+          paddingTop: insets.top + TOP_SAFE_AREA_PADDING,
+          paddingBottom: tabBarHeight + EXTRA_TAB_PADDING
+        }
+      ]}
+    >
+      <View style={styles.headerCard}>
+        <View style={styles.avatar}>
+          <Text style={styles.avatarText}>{getInitial(profile.fullName)}</Text>
+        </View>
+        <View style={styles.headerCopy}>
+          <Text style={styles.name}>{profile.fullName || 'VenueVerse User'}</Text>
+          <Text style={styles.email}>{profile.email}</Text>
+          <View style={styles.badgeRow}>
+            <RoleBadge role={profile.role} />
+            <Badge icon="business-outline" label={profile.department ?? 'Department not set'} />
+          </View>
+        </View>
       </View>
 
-      <Section title="Profile Information">
-        <Detail label="Full name" value={profile.fullName} />
-        <Detail label="Email" value={profile.email} />
-        <Detail label="Department" value={profile.department} />
-        <Detail label="Role" value={profile.role} />
-      </Section>
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Account</Text>
+        <ActionRow
+          icon="person-outline"
+          title="Edit Profile"
+          subtitle="Update your name and department"
+          onPress={() => navigation.navigate('EditProfile')}
+        />
+        <ActionRow
+          icon="lock-closed-outline"
+          title="Change Password"
+          subtitle="Update your account password"
+          onPress={() => navigation.navigate('ChangePassword')}
+        />
+        <ActionRow
+          icon="settings-outline"
+          title="Preferences"
+          subtitle="Notifications"
+          onPress={() => navigation.navigate('Settings')}
+        />
+      </View>
 
-      <Section title="Password">
-        <View style={styles.infoBox}>
-          <Text style={styles.infoTitle}>Using a temporary password?</Text>
-          <Text style={styles.infoText}>Change your password after your first login to keep your account secure.</Text>
-        </View>
-        <Text style={styles.sectionBody}>Update your temporary password after your first login.</Text>
-        <AppButton title="Change Password" variant="secondary" onPress={() => navigation.navigate('ChangePassword')} />
-      </Section>
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Tools</Text>
+        <ActionRow
+          icon="qr-code-outline"
+          title="Scan Receipt QR"
+          subtitle="Verify VenueVerse booking receipts"
+          onPress={() => navigation.navigate('ScanReceiptQR')}
+        />
+      </View>
+
+      <AboutCard />
 
       {logoutError ? <Text style={styles.errorText}>{logoutError}</Text> : null}
-      <Pressable
-        accessibilityRole="button"
+      <AppButton
+        title={loggingOut ? 'Logging out...' : 'Log Out'}
+        icon="log-out-outline"
+        variant="destructive"
+        loading={loggingOut}
         disabled={loggingOut}
         onPress={confirmLogout}
-        style={({ pressed }) => [styles.logoutButton, (pressed || loggingOut) && styles.buttonPressed]}
-      >
-        {loggingOut ? (
-          <ActivityIndicator color="#DC2626" />
-        ) : (
-          <Text style={styles.logoutText}>Log Out</Text>
-        )}
-      </Pressable>
+      />
     </ScrollView>
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function ActionRow({
+  icon,
+  title,
+  subtitle,
+  onPress
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  subtitle: string;
+  onPress: () => void;
+}) {
   return (
-    <View style={styles.card}>
-      <Text style={styles.sectionTitle}>{title}</Text>
-      {children}
+    <Pressable accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.actionRow, pressed && styles.pressed]}>
+      <View style={styles.actionIcon}>
+        <Ionicons name={icon} size={22} color={colors.primary} />
+      </View>
+      <View style={styles.actionCopy}>
+        <Text style={styles.actionTitle}>{title}</Text>
+        <Text style={styles.actionSubtitle}>{subtitle}</Text>
+      </View>
+      <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+    </Pressable>
+  );
+}
+
+function RoleBadge({ role }: { role: UserRole }) {
+  const isPrivileged = role === 'admin' || role === 'super_admin';
+  const label = role === 'super_admin' ? 'SUPER ADMIN' : role.toUpperCase();
+  return <Badge icon={isPrivileged ? 'shield-checkmark-outline' : 'person-circle-outline'} label={label} tone={isPrivileged ? 'admin' : 'user'} />;
+}
+
+function Badge({ icon, label, tone = 'user' }: { icon: keyof typeof Ionicons.glyphMap; label: string; tone?: 'admin' | 'user' }) {
+  return (
+    <View style={[styles.badge, tone === 'admin' && styles.adminBadge]}>
+      <Ionicons name={icon} size={14} color={tone === 'admin' ? colors.primary : colors.textMuted} />
+      <Text style={[styles.badgeText, tone === 'admin' && styles.adminBadgeText]}>{label}</Text>
     </View>
   );
 }
 
-function Detail({ label, value }: { label: string; value?: string | null }) {
-  return (
-    <View style={styles.detail}>
-      <Text style={styles.detailLabel}>{label}</Text>
-      <Text style={styles.detailValue}>{value || 'Not provided'}</Text>
-    </View>
-  );
+function getInitial(name: string) {
+  return name.trim().charAt(0).toUpperCase() || 'V';
 }
 
 const styles = StyleSheet.create({
@@ -118,12 +188,31 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     gap: spacing.md
   },
-  summaryCard: {
+  headerCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
     backgroundColor: colors.primary,
     borderRadius: radius.xl,
     padding: spacing.lg,
-    gap: spacing.xs,
     ...shadows.card
+  },
+  avatar: {
+    width: 68,
+    height: 68,
+    borderRadius: radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surface
+  },
+  avatarText: {
+    color: colors.primary,
+    fontSize: fontSizes.title,
+    fontWeight: '900'
+  },
+  headerCopy: {
+    flex: 1,
+    gap: spacing.xs
   },
   name: {
     color: colors.surface,
@@ -135,57 +224,79 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.sm,
     fontWeight: '700'
   },
+  badgeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.xs
+  },
+  badge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    backgroundColor: colors.surface,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs
+  },
+  adminBadge: {
+    backgroundColor: colors.primaryLight
+  },
+  badgeText: {
+    color: colors.textMuted,
+    fontSize: fontSizes.xs,
+    fontWeight: '900'
+  },
+  adminBadgeText: {
+    color: colors.primary
+  },
   card: {
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.borderSoft,
     borderRadius: radius.lg,
     padding: spacing.lg,
-    gap: spacing.md,
+    gap: spacing.sm,
     ...shadows.card
   },
   sectionTitle: {
     color: colors.text,
     fontSize: fontSizes.lg,
-    fontWeight: '900'
-  },
-  sectionBody: {
-    color: colors.textMuted,
-    fontSize: fontSizes.sm,
-    fontWeight: '700',
-    lineHeight: 20
-  },
-  infoBox: {
-    backgroundColor: colors.primaryLight,
-    borderRadius: radius.md,
-    padding: spacing.md,
-    gap: spacing.xs
-  },
-  infoTitle: {
-    color: colors.primary,
-    fontSize: fontSizes.sm,
-    fontWeight: '900'
-  },
-  infoText: {
-    color: colors.textMuted,
-    fontSize: fontSizes.sm,
-    fontWeight: '700',
-    lineHeight: 20
-  },
-  detail: {
-    gap: spacing.xs
-  },
-  detailLabel: {
-    color: colors.textMuted,
-    fontSize: fontSizes.xs,
     fontWeight: '900',
-    textTransform: 'uppercase'
+    marginBottom: spacing.xs
   },
-  detailValue: {
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    minHeight: 68,
+    borderRadius: radius.md,
+    paddingVertical: spacing.sm
+  },
+  actionIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.primaryLight
+  },
+  actionCopy: {
+    flex: 1,
+    gap: spacing.xs
+  },
+  actionTitle: {
     color: colors.text,
     fontSize: fontSizes.md,
-    fontWeight: '700',
-    lineHeight: 22
+    fontWeight: '900'
+  },
+  actionSubtitle: {
+    color: colors.textMuted,
+    fontSize: fontSizes.sm,
+    fontWeight: '700'
+  },
+  pressed: {
+    opacity: 0.65
   },
   errorText: {
     color: colors.status.rejected,
@@ -196,23 +307,5 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     fontSize: fontSizes.sm,
     fontWeight: '700'
-  },
-  logoutButton: {
-    minHeight: 50,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: '#DC2626',
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md
-  },
-  logoutText: {
-    color: '#DC2626',
-    fontSize: fontSizes.sm,
-    fontWeight: '900'
-  },
-  buttonPressed: {
-    opacity: 0.65
   }
 });

@@ -1,4 +1,6 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { AppState } from 'react-native';
+import { configureAndroidNotificationChannel, subscribeToPushNotificationReceived } from '@/lib/notifications';
 import { supabase } from '@/lib/supabase';
 import {
   getUnreadNotificationCount,
@@ -17,8 +19,8 @@ type NotificationsContextValue = {
   refreshing: boolean;
   updating: boolean;
   error: string;
-  fetchNotifications: () => Promise<void>;
-  fetchUnreadCount: () => Promise<void>;
+  fetchNotifications: (options?: { forceRefresh?: boolean }) => Promise<void>;
+  fetchUnreadCount: (options?: { forceRefresh?: boolean }) => Promise<void>;
   refresh: () => Promise<void>;
   markAsRead: (notificationId: string) => Promise<void>;
   markAllAsRead: () => Promise<void>;
@@ -36,29 +38,29 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   const [updating, setUpdating] = useState(false);
   const [error, setError] = useState('');
 
-  const fetchNotifications = useCallback(async () => {
+  const fetchNotifications = useCallback(async (options?: { forceRefresh?: boolean }) => {
     if (!userId) {
       setNotifications([]);
       return;
     }
 
     setError('');
-    setNotifications(await getUserNotifications(userId));
+    setNotifications(await getUserNotifications(userId, options));
   }, [userId]);
 
-  const fetchUnreadCount = useCallback(async () => {
+  const fetchUnreadCount = useCallback(async (options?: { forceRefresh?: boolean }) => {
     if (!userId) {
       setUnreadCount(0);
       return;
     }
 
-    setUnreadCount(await getUnreadNotificationCount(userId));
+    setUnreadCount(await getUnreadNotificationCount(userId, options));
   }, [userId]);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await Promise.all([fetchNotifications(), fetchUnreadCount()]);
+      await Promise.all([fetchNotifications({ forceRefresh: true }), fetchUnreadCount({ forceRefresh: true })]);
     } catch (refreshError) {
       setError(refreshError instanceof Error ? refreshError.message : 'Unable to refresh notifications.');
       throw refreshError;
@@ -72,7 +74,8 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       try {
         setUpdating(true);
         await markNotificationRead(notificationId);
-        await Promise.all([fetchNotifications(), fetchUnreadCount()]);
+        setNotifications((current) => current.map((item) => item.id === notificationId ? { ...item, isRead: true } : item));
+        setUnreadCount((current) => Math.max(0, current - 1));
       } catch (markError) {
         setError(markError instanceof Error ? markError.message : 'Unable to mark notification as read.');
         throw markError;
@@ -89,7 +92,8 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     try {
       setUpdating(true);
       await markAllNotificationsRead(userId);
-      await Promise.all([fetchNotifications(), fetchUnreadCount()]);
+      setNotifications((current) => current.map((item) => ({ ...item, isRead: true })));
+      setUnreadCount(0);
     } catch (markError) {
       setError(markError instanceof Error ? markError.message : 'Unable to mark all notifications as read.');
       throw markError;
@@ -100,6 +104,10 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let active = true;
+
+    configureAndroidNotificationChannel().catch((channelError) => {
+      if (__DEV__) console.log('[notifications] startup channel setup failed', channelError);
+    });
 
     setLoading(true);
     Promise.all([fetchNotifications(), fetchUnreadCount()])
@@ -120,14 +128,52 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!userId) return;
 
-    const channel = subscribeToNotifications(userId, () => {
-      Promise.all([fetchNotifications(), fetchUnreadCount()]).catch(() => undefined);
+    const channel = subscribeToNotifications(userId, {
+      onInsert: (notification) => {
+        if (__DEV__) console.log('[realtime] notification insert received', notification.id);
+        setNotifications((current) => {
+          if (current.some((item) => item.id === notification.id)) return current;
+          return [notification, ...current];
+        });
+        if (!notification.isRead) {
+          setUnreadCount((current) => current + 1);
+        }
+      },
+      onUpdate: (notification) => {
+        setNotifications((current) => {
+          const nextNotifications = current.map((item) => (item.id === notification.id ? notification : item));
+          setUnreadCount(nextNotifications.filter((item) => !item.isRead).length);
+          return nextNotifications;
+        });
+      },
+      onStatus: (status) => {
+        if (__DEV__) console.log('[realtime] notifications status', status);
+      }
     });
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [fetchNotifications, fetchUnreadCount, userId]);
+  }, [userId]);
+
+  useEffect(() => {
+    if (!userId) return;
+
+    const receivedSubscription = subscribeToPushNotificationReceived(() => {
+      void refresh().catch(() => undefined);
+    });
+
+    const appStateSubscription = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      if (__DEV__) console.log('[app-state] active refresh');
+      void refresh().catch(() => undefined);
+    });
+
+    return () => {
+      receivedSubscription.remove();
+      appStateSubscription.remove();
+    };
+  }, [refresh, userId]);
 
   const value = useMemo(
     () => ({

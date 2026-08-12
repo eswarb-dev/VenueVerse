@@ -10,10 +10,30 @@ type PushRequest = {
 type PushTokenRow = {
   id: string;
   expo_push_token: string;
+  app_variant: string | null;
+  application_id: string | null;
+};
+
+type ExpoTicket = {
+  status?: string;
+  id?: string;
+  message?: string;
+  details?: {
+    error?: string;
+  };
+};
+
+type ExpoReceipt = {
+  status?: string;
+  message?: string;
+  details?: {
+    error?: string;
+  };
 };
 
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Origin': Deno.env.get('VENUEVERSE_ALLOWED_WEB_ORIGIN') ?? '',
+  'Vary': 'Origin',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS'
 };
@@ -84,8 +104,9 @@ Deno.serve(async (req) => {
 
   const { data: tokens, error: tokensError } = await supabase
     .from('push_tokens')
-    .select('id, expo_push_token')
-    .eq('user_id', payload.user_id);
+    .select('id, expo_push_token, app_variant, application_id')
+    .eq('user_id', payload.user_id)
+    .eq('is_active', true);
 
   if (tokensError) {
     return jsonResponse({ error: tokensError.message }, 500);
@@ -94,19 +115,30 @@ Deno.serve(async (req) => {
   const pushTokens = ((tokens ?? []) as PushTokenRow[]).filter((row) =>
     row.expo_push_token.startsWith('ExponentPushToken[') || row.expo_push_token.startsWith('ExpoPushToken[')
   );
+  const tokenSummary = summarizeTokens(pushTokens);
+  console.log('[push-send] target token count', pushTokens.length, tokenSummary);
 
   if (pushTokens.length === 0) {
-    return jsonResponse({ ok: true, sent: 0 });
+    return jsonResponse({ ok: true, sent: 0, tokenSummary });
   }
 
   let sent = 0;
+  const ticketIds: string[] = [];
+  const ticketTokenIds = new Map<string, string>();
+  const invalidTokenIds = new Set<string>();
+
   for (const chunk of chunkArray(pushTokens, 100)) {
     const messages = chunk.map((row) => ({
       to: row.expo_push_token,
       sound: 'default',
       title: payload.title,
       body: payload.body,
-      data: payload.data ?? {}
+      priority: 'high',
+      channelId: 'default',
+      data: {
+        ...(payload.data ?? {}),
+        type: typeof payload.data?.type === 'string' ? payload.data.type : 'app_notification'
+      }
     }));
 
     const expoResponse = await fetch('https://exp.host/--/api/v2/push/send', {
@@ -124,19 +156,113 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: 'Expo Push API request failed.', details: result }, 502);
     }
 
-    const receipts = Array.isArray(result.data) ? result.data : [result.data];
-    await Promise.all(
-      receipts.map((receipt, index) => {
-        if (receipt?.details?.error !== 'DeviceNotRegistered') return Promise.resolve();
-        return supabase.from('push_tokens').delete().eq('id', chunk[index].id).then(() => undefined);
-      })
-    );
+    const tickets = (Array.isArray(result.data) ? result.data : [result.data]) as ExpoTicket[];
+    console.log('[push] Expo ticket received', tickets.length);
+    console.log('[push-send] ticket status', summarizeTicketStatuses(tickets));
+
+    tickets.forEach((ticket, index) => {
+      if (ticket?.id) {
+        ticketIds.push(ticket.id);
+        ticketTokenIds.set(ticket.id, chunk[index].id);
+      }
+      if (ticket?.details?.error === 'DeviceNotRegistered') {
+        invalidTokenIds.add(chunk[index].id);
+      }
+    });
 
     sent += chunk.length;
   }
 
-  return jsonResponse({ ok: true, sent });
+  const receiptSummary = await checkExpoReceipts(ticketIds);
+  console.log('[push] Expo receipt checked', receiptSummary.checked);
+  console.log('[push-send] receipt status', receiptSummary.statuses);
+
+  for (const ticketId of receiptSummary.invalidTicketIds) {
+    const tokenId = ticketTokenIds.get(ticketId);
+    if (tokenId) invalidTokenIds.add(tokenId);
+  }
+
+  await deactivateInvalidTokens(supabase, [...invalidTokenIds]);
+
+  return jsonResponse({
+    ok: true,
+    sent,
+    tickets: ticketIds.length,
+    receiptsChecked: receiptSummary.checked,
+    disabledTokens: invalidTokenIds.size,
+    tokenSummary,
+    receiptStatuses: receiptSummary.statuses
+  });
 });
+
+async function checkExpoReceipts(ticketIds: string[]) {
+  const invalidTicketIds: string[] = [];
+  const statuses: Record<string, number> = {};
+  let checked = 0;
+
+  for (const chunk of chunkArray(ticketIds, 300)) {
+    if (chunk.length === 0) continue;
+
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    const expoResponse = await fetch('https://exp.host/--/api/v2/push/getReceipts', {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Accept-encoding': 'gzip, deflate',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ ids: chunk })
+    });
+
+    const result = await expoResponse.json().catch(() => ({}));
+    if (!expoResponse.ok || !result.data) continue;
+
+    chunk.forEach((ticketId) => {
+      const receipt = result.data[ticketId] as ExpoReceipt | undefined;
+      if (!receipt) return;
+      checked += 1;
+      const status = receipt.status ?? receipt.details?.error ?? 'unknown';
+      statuses[status] = (statuses[status] ?? 0) + 1;
+      if (receipt.details?.error === 'DeviceNotRegistered') {
+        invalidTicketIds.push(ticketId);
+      }
+    });
+  }
+
+  return { checked, invalidTicketIds, statuses };
+}
+
+function summarizeTicketStatuses(tickets: ExpoTicket[]) {
+  return tickets.reduce<Record<string, number>>((summary, ticket) => {
+    const status = ticket.status ?? ticket.details?.error ?? 'unknown';
+    summary[status] = (summary[status] ?? 0) + 1;
+    return summary;
+  }, {});
+}
+
+function summarizeTokens(tokens: PushTokenRow[]) {
+  return tokens.reduce<Record<string, number>>((summary, token) => {
+    const variant = token.app_variant ?? 'unknown';
+    const applicationId = token.application_id ?? 'unknown';
+    const key = `${variant}:${applicationId}`;
+    summary[key] = (summary[key] ?? 0) + 1;
+    return summary;
+  }, {});
+}
+
+async function deactivateInvalidTokens(supabase: ReturnType<typeof createClient>, tokenIds: string[]) {
+  if (tokenIds.length === 0) return;
+
+  await Promise.all(
+    tokenIds.map((tokenId) =>
+      supabase
+        .from('push_tokens')
+        .update({ is_active: false, updated_at: new Date().toISOString() })
+        .eq('id', tokenId)
+        .then(() => undefined)
+    )
+  );
+}
 
 async function canSendNotification({
   supabase,
@@ -151,29 +277,50 @@ async function canSendNotification({
 }) {
   if (callerId === targetUserId) return true;
 
-  const callerRole = await getUserRole(supabase, callerId);
-  const callerIsAdmin = callerRole === 'admin' || callerRole === 'super_admin';
-  if (callerIsAdmin) return true;
+  const callerProfile = await getUserProfile(supabase, callerId);
 
   const bookingId = typeof data.booking_id === 'string' ? data.booking_id : null;
   const type = typeof data.type === 'string' ? data.type : null;
-  if (!bookingId || type !== 'new_booking_request') return false;
+  if (!bookingId) return false;
 
   const { data: booking } = await supabase
     .from('bookings')
-    .select('user_id')
+    .select('user_id, halls(department)')
     .eq('id', bookingId)
     .maybeSingle();
 
-  if (booking?.user_id !== callerId) return false;
+  const hall = Array.isArray(booking?.halls) ? booking.halls[0] : booking?.halls;
+  const hallDepartment = hall?.department;
 
-  const targetRole = await getUserRole(supabase, targetUserId);
-  return targetRole === 'admin' || targetRole === 'super_admin';
+  if (callerProfile?.role === 'admin') {
+    if (callerProfile.department !== hallDepartment) return false;
+    if (['booking_approved', 'booking_rejected'].includes(type ?? '')) {
+      return booking?.user_id === targetUserId;
+    }
+
+    if (['new_booking_request', 'booking_request'].includes(type ?? '')) {
+      const targetProfile = await getUserProfile(supabase, targetUserId);
+      return targetProfile?.role === 'admin' && targetProfile.department === hallDepartment;
+    }
+
+    return false;
+  }
+
+  if (callerProfile?.role === 'super_admin') {
+    return false;
+  }
+
+  if (booking?.user_id !== callerId) return false;
+  if (!['new_booking_request', 'booking_request'].includes(type ?? '')) return false;
+  if (!hallDepartment) return false;
+
+  const targetProfile = await getUserProfile(supabase, targetUserId);
+  return targetProfile?.role === 'admin' && targetProfile.department === hallDepartment;
 }
 
-async function getUserRole(supabase: ReturnType<typeof createClient>, userId: string) {
-  const { data } = await supabase.from('profiles').select('role').eq('id', userId).maybeSingle();
-  return data?.role ?? null;
+async function getUserProfile(supabase: ReturnType<typeof createClient>, userId: string) {
+  const { data } = await supabase.from('profiles').select('role, department').eq('id', userId).maybeSingle();
+  return data ?? null;
 }
 
 async function checkRateLimit({

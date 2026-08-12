@@ -1,18 +1,82 @@
 node_modules/
 .expo/
+.expo-shared/
+.eas/
 
+# Environment and local secrets
 .env
 .env.*
 !.env.example
+secret/
+secrets/
+secrets_important/
+secrets*/
+*pass*.txt
+*password*.txt
+*.pem
+*.p12
+*.pfx
+*.crt
+*.key
+*service-account*.json
+*firebase-adminsdk*.json
 
+# Android signing and generated output
+android/key.properties
+android/*.keystore
+android/*.jks
+android/app/*.keystore
+android/app/*.jks
+android/app/debug.keystore
+android/app/release.keystore
+android/.gradle/
+android/build/
+android/app/build/
+android/**/build/
+*.aab
+*.apk
+
+# Logs and crash dumps
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+hs_err_pid*.log
+replay_pid*.log
 
+# Backups and generated archives
 *.zip
+*.7z
+*.rar
+*.tar
+*.tgz
+*.gz
+*.bak
+*.candidate
+
+# Local editor and OS state
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Supabase local link/temp state
+supabase/.temp/
+
+# Local screenshots/check artifacts
+Screenshot*.png
+venueverse-check.png
+
+# Keep project image assets tracked where intentionally committed.
 *.png
 !assets/**/*.png
 !android/app/src/main/res/**/*.png
+!supabase/functions/_shared/assets/**/*.png
 
-supabase pass.txt
+# Keep demo assets available for repo tracking.
+!demo/
+!demo/**
+!Demo/
+!Demo/**

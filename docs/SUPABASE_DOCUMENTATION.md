@@ -10,10 +10,10 @@ Source of truth: `supabase/schema.sql`.
 
 | Capability | Implementation |
 | --- | --- |
-| Account creation | Super admin-only `admin-create-user` Edge Function. Public self-registration is not implemented. |
+| Account creation | Admin-only `admin-create-user` Edge Function. Public self-registration is not implemented. |
 | Login | `supabase.auth.signInWithPassword`. |
 | Logout | `supabase.auth.signOut`. |
-| Password reset | `supabase.auth.resetPasswordForEmail`. |
+| Password reset | Supabase Auth recovery OTP sent through custom Gmail SMTP. The app calls `resetPasswordForEmail`, verifies with `verifyOtp({ type: 'recovery' })`, then updates with `updateUser({ password })`. The Reset Password template must use `{{ .Token }}` and no localhost redirect is used. |
 | Password change | Current password verified with `signInWithPassword`, then updated with `supabase.auth.updateUser`. |
 | Session restore | `supabase.auth.getSession` and `supabase.auth.onAuthStateChange`. |
 | Profile creation | `admin-create-user` creates profiles for admin-created accounts; database trigger `handle_new_user_profile` also exists for Auth user inserts. |
@@ -30,7 +30,7 @@ Purpose: Stores app profile data for Supabase Auth users.
 | `full_name` | `text` | Required |
 | `email` | `text` | Required, unique |
 | `department` | `text` | Optional |
-| `role` | `text` | Required, default `user`, check: `user`, `admin`, `super_admin` |
+| `role` | `text` | Required, default `user`, check: `user`, `admin` |
 | `register_number` | `text` | Optional; not detected in current admin-created account payload |
 | `phone` | `text` | Optional; not detected in current admin-created account payload |
 | `created_at` | `timestamp with time zone` | Default `now()` |
@@ -154,9 +154,7 @@ erDiagram
 | `get_today_booked_halls` | RPC | Returns today's pending/approved bookings with hall metadata. |
 | `set_booking_updated_at` | Trigger helper | Updates `updated_at`. |
 | `enforce_booking_overlap_rules` | Trigger helper | Prevents duplicate/conflicting bookings. |
-| `is_super_admin` | RLS helper | Checks current user role. |
 | `is_admin` | RLS helper | Checks current user role. |
-| `is_admin_or_super_admin` | RLS helper | Checks admin-level access. |
 | `create_admin_booking_notifications` | RPC | Inserts notifications for admins after a booking request. |
 | `prevent_profile_role_update` | Trigger helper | Blocks unauthorized role changes. |
 | `handle_new_user_profile` | Trigger helper | Creates profile after Auth user creation. |
@@ -170,7 +168,7 @@ erDiagram
 | `set_booking_updated_at` | `bookings` | Maintains `updated_at`. |
 | `set_push_token_updated_at` | `push_tokens` | Maintains `updated_at`. |
 | `enforce_booking_overlap_rules` | `bookings` | Blocks conflicting inserts and approved updates. |
-| `prevent_profile_role_update` | `profiles` | Prevents non-super-admin role changes. |
+| `prevent_profile_role_update` | `profiles` | Prevents non-admin role changes. |
 | `handle_new_user_profile` | `auth.users` | Creates app profile on Auth user insert. |
 | `enforce_booking_update_rules` | `bookings` | Allows users to cancel only own pending bookings and admins to review only. |
 | `enforce_notification_update_rules` | `notifications` | Allows users to update only their own notification read state. |
@@ -189,8 +187,8 @@ RLS is enabled on:
 
 | Table | Policies |
 | --- | --- |
-| `profiles` | `profiles_select_own`, `profiles_select_admin_all`, `profiles_update_own`, `profiles_insert_own_user`, `profiles_update_roles_super_admin` |
-| `halls` | `halls_select_active_authenticated`, `halls_select_admin_all`, `halls_insert_admin`, `halls_update_admin`, `halls_delete_super_admin` |
+| `profiles` | `profiles_select_own`, `profiles_select_admin_all`, `profiles_update_own`, `profiles_insert_own_user`, `profiles_update_roles_admin` |
+| `halls` | `halls_select_active_authenticated`, `halls_select_admin_all`, `halls_insert_admin`, `halls_update_admin`, `halls_delete_admin` |
 | `bookings` | `bookings_insert_own`, `bookings_select_own`, `bookings_select_admin_all`, `bookings_cancel_own_pending`, `bookings_review_admin` |
 | `notifications` | `notifications_select_own`, `notifications_update_read_own`, `notifications_insert_own`, `notifications_insert_admin` |
 | `push_tokens` | `push_tokens_manage_own`, `push_tokens_select_admin` |

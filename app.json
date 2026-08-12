@@ -3,22 +3,76 @@
     "name": "VenueVerse",
     "slug": "venueverse",
     "scheme": "venueverse",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "orientation": "portrait",
+    "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "assetBundlePatterns": ["**/*"],
-    "plugins": ["expo-notifications"],
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0A3A66"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "plugins": [
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#0A3A66",
+          "defaultChannel": "default"
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow VenueVerse to access your camera to scan receipt QR codes.",
+          "barcodeScannerEnabled": true
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "VenueVerse needs photo access to upload venue images.",
+          "cameraPermission": "VenueVerse needs camera access to take venue photos."
+        }
+      ],
+      "expo-secure-store"
+    ],
     "ios": {
       "supportsTablet": true
     },
     "android": {
-      "package": "com.venueverse.app",
+      "package": "com.srec.aids.venueverse",
+      "versionCode": 5,
+      "googleServicesFile": "./google-services.json",
+      "permissions": [
+        "POST_NOTIFICATIONS"
+      ],
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.ACCESS_WIFI_STATE",
+        "android.permission.DOWNLOAD_WITHOUT_NOTIFICATION",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.USE_FINGERPRINT"
+      ],
       "adaptiveIcon": {
-        "backgroundColor": "#0F3D5E"
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FFFFFF"
       }
     },
     "web": {
       "bundler": "metro"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "988617f7-45a8-49eb-a03f-64c4e1c96dcf"
+      }
     }
   }
 }
+

@@ -1,56 +1,106 @@
+import { CompositeScreenProps } from '@react-navigation/native';
+import { BottomTabScreenProps, useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { format } from 'date-fns';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { AppState, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorView } from '@/components/ErrorView';
 import { LoadingView } from '@/components/LoadingView';
 import { StatusBadge } from '@/components/StatusBadge';
 import { colors, fontSizes, radius, spacing } from '@/constants/theme';
-import { AppStackParamList } from '@/navigation/types';
-import { getUserBookings } from '@/services/bookingService';
+import { EXTRA_TAB_PADDING, TOP_SAFE_AREA_PADDING } from '@/constants/layout';
+import { AppStackParamList, UserTabParamList } from '@/navigation/types';
+import { getMyDepartmentBookings, getUserBookings } from '@/services/bookingService';
+import { debounceRealtimeRefresh, subscribeToBookingChanges } from '@/services/bookingRealtimeService';
+import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/store/AuthContext';
 import { BookingPreview, BookingStatus } from '@/types/venue';
 
-type Props = NativeStackScreenProps<AppStackParamList, 'Bookings'>;
+type Props = CompositeScreenProps<
+  BottomTabScreenProps<UserTabParamList, 'Bookings'>,
+  NativeStackScreenProps<AppStackParamList>
+>;
 type Filter = 'all' | BookingStatus;
+type BookingScope = 'mine' | 'department';
 
 const filters: { label: string; value: Filter }[] = [
   { label: 'All', value: 'all' },
   { label: 'Pending', value: 'pending' },
   { label: 'Approved', value: 'approved' },
   { label: 'Rejected', value: 'rejected' },
+  { label: 'Revoked', value: 'revoked' },
   { label: 'Cancelled', value: 'cancelled' },
   { label: 'Completed', value: 'completed' }
 ];
 
 export function MyBookingsScreen({ navigation }: Props) {
+  const tabBarHeight = useBottomTabBarHeight();
+  const insets = useSafeAreaInsets();
   const { profile, user } = useAuth();
-  const [bookings, setBookings] = useState<BookingPreview[]>([]);
+  const [myBookings, setMyBookings] = useState<BookingPreview[]>([]);
+  const [departmentBookings, setDepartmentBookings] = useState<BookingPreview[]>([]);
+  const [loadedScopes, setLoadedScopes] = useState<Record<BookingScope, boolean>>({ mine: false, department: false });
+  const [activeScope, setActiveScope] = useState<BookingScope>('mine');
   const [activeFilter, setActiveFilter] = useState<Filter>('all');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
 
-  const loadBookings = useCallback(async () => {
+  const loadBookings = useCallback(async (scope: BookingScope, forceRefresh = false) => {
     const userId = profile?.id ?? user?.id;
     if (!userId) return;
 
     setError('');
-    setBookings(await getUserBookings(userId));
+    if (scope === 'mine') {
+      setMyBookings(await getUserBookings(userId, { forceRefresh }));
+    } else {
+      setDepartmentBookings(await getMyDepartmentBookings({ forceRefresh }));
+    }
+    setLoadedScopes((current) => ({ ...current, [scope]: true }));
   }, [profile?.id, user?.id]);
 
   useEffect(() => {
+    if (loadedScopes[activeScope]) return;
     setLoading(true);
-    loadBookings()
+    loadBookings(activeScope)
       .catch((loadError) => setError(loadError instanceof Error ? loadError.message : 'Unable to load bookings.'))
       .finally(() => setLoading(false));
-  }, [loadBookings]);
+  }, [activeScope, loadBookings, loadedScopes]);
+
+  useEffect(() => {
+    const userId = profile?.id ?? user?.id;
+    if (!userId) return;
+
+    const refreshBookings = debounceRealtimeRefresh(() => {
+      void loadBookings(activeScope, true).catch((loadError) => {
+        if (__DEV__) console.log('[realtime] bookings refresh failed', loadError);
+      });
+    });
+
+    const channel = subscribeToBookingChanges({
+      channelName: `bookings:list:${userId}:${activeScope}`,
+      onChange: () => refreshBookings.schedule()
+    });
+
+    const appStateSubscription = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      if (__DEV__) console.log('[app-state] active refresh');
+      refreshBookings.schedule();
+    });
+
+    return () => {
+      refreshBookings.cancel();
+      appStateSubscription.remove();
+      supabase.removeChannel(channel);
+    };
+  }, [activeScope, loadBookings, profile?.id, user?.id]);
 
   const onRefresh = async () => {
     setRefreshing(true);
     try {
-      await loadBookings();
+      await loadBookings(activeScope, true);
     } catch (refreshError) {
       setError(refreshError instanceof Error ? refreshError.message : 'Unable to refresh bookings.');
     } finally {
@@ -58,23 +108,44 @@ export function MyBookingsScreen({ navigation }: Props) {
     }
   };
 
+  const bookings = activeScope === 'mine' ? myBookings : departmentBookings;
+
   const filteredBookings = useMemo(() => {
     if (activeFilter === 'all') return bookings;
     return bookings.filter((booking) => booking.status === activeFilter);
   }, [activeFilter, bookings]);
 
-  if (loading) return <LoadingView message="Loading your bookings..." />;
+  const renderBooking = useCallback(({ item }: { item: BookingPreview }) => (
+    <BookingCard
+      booking={item}
+      currentUserId={profile?.id ?? user?.id ?? null}
+      showRequester={activeScope === 'department'}
+      onPress={() => navigation.navigate('BookingDetails', { bookingId: item.id })}
+    />
+  ), [activeScope, navigation, profile?.id, user?.id]);
+
+  if (loading) return <LoadingView message={activeScope === 'mine' ? 'Loading your bookings...' : 'Loading department bookings...'} />;
 
   return (
     <FlatList
       style={styles.root}
-      contentContainerStyle={styles.content}
+      contentContainerStyle={[
+        styles.content,
+        {
+          paddingTop: insets.top + TOP_SAFE_AREA_PADDING,
+          paddingBottom: tabBarHeight + EXTRA_TAB_PADDING
+        }
+      ]}
       data={filteredBookings}
       keyExtractor={(item) => item.id}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       ListHeaderComponent={
         <View style={styles.header}>
           {error ? <ErrorView message={error} onRetry={() => void onRefresh()} /> : null}
+          <View style={styles.scopeTabs}>
+            <ScopeTab label="My Bookings" active={activeScope === 'mine'} onPress={() => setActiveScope('mine')} />
+            <ScopeTab label="Department Bookings" active={activeScope === 'department'} onPress={() => setActiveScope('department')} />
+          </View>
           <FlatList
             horizontal
             data={filters}
@@ -94,25 +165,53 @@ export function MyBookingsScreen({ navigation }: Props) {
       }
       ListEmptyComponent={
         <EmptyState
-          title="No bookings found"
-          message={activeFilter === 'all' ? 'Your booking requests will appear here.' : 'No bookings match this status.'}
+          title={activeScope === 'mine' ? 'No bookings yet' : 'No department bookings yet'}
+          message={
+            activeFilter === 'all'
+              ? activeScope === 'mine'
+                ? 'Your booking requests will appear here.'
+                : 'Bookings created by your department users will appear here.'
+              : 'No bookings match this status.'
+          }
         />
       }
-      renderItem={({ item }) => (
-        <BookingCard booking={item} onPress={() => navigation.navigate('BookingDetails', { bookingId: item.id })} />
-      )}
+      renderItem={renderBooking}
     />
   );
 }
 
-function BookingCard({ booking, onPress }: { booking: BookingPreview; onPress: () => void }) {
+function ScopeTab({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} style={[styles.scopeTab, active && styles.scopeTabActive]}>
+      <Text style={[styles.scopeTabText, active && styles.scopeTabTextActive]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+const BookingCard = memo(function BookingCard({
+  booking,
+  currentUserId,
+  showRequester,
+  onPress
+}: {
+  booking: BookingPreview;
+  currentUserId: string | null;
+  showRequester: boolean;
+  onPress: () => void;
+}) {
+  const requesterLabel = booking.requesterId === currentUserId
+    ? `You${booking.requesterDepartment ? ` • ${booking.requesterDepartment}` : ''}`
+    : `${booking.requesterName ?? 'Unknown requester'}${booking.requesterDepartment ? ` • ${booking.requesterDepartment}` : ''}`;
+  const venueLabel = `${booking.hallName ?? 'Hall not available'}${booking.hallDepartment ? ` • ${booking.hallDepartment}` : ''}`;
+
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.card, pressed && styles.pressed]}>
       <View style={styles.cardHeader}>
         <Text style={styles.title}>{booking.eventTitle}</Text>
         <StatusBadge status={booking.status} />
       </View>
-      <Text style={styles.meta}>{booking.hallName ?? 'Hall not available'}</Text>
+      {showRequester ? <Text style={styles.meta}>Requester: {requesterLabel}</Text> : null}
+      <Text style={styles.meta}>Venue: {venueLabel}</Text>
       <Text style={styles.time}>{format(new Date(booking.startTime), 'dd MMM yyyy')}</Text>
       <Text style={styles.meta}>
         {format(new Date(booking.startTime), 'h:mm a')} - {format(new Date(booking.endTime), 'h:mm a')}
@@ -120,7 +219,7 @@ function BookingCard({ booking, onPress }: { booking: BookingPreview; onPress: (
       {booking.createdAt ? <Text style={styles.created}>Created {format(new Date(booking.createdAt), 'dd MMM yyyy, h:mm a')}</Text> : null}
     </Pressable>
   );
-}
+});
 
 const styles = StyleSheet.create({
   root: {
@@ -133,6 +232,35 @@ const styles = StyleSheet.create({
   },
   header: {
     gap: spacing.md
+  },
+  scopeTabs: {
+    flexDirection: 'row',
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.lg,
+    padding: 4,
+    gap: 4
+  },
+  scopeTab: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm
+  },
+  scopeTabActive: {
+    backgroundColor: colors.primary
+  },
+  scopeTabText: {
+    color: colors.textMuted,
+    fontSize: fontSizes.sm,
+    fontWeight: '900',
+    textAlign: 'center'
+  },
+  scopeTabTextActive: {
+    color: colors.surface
   },
   filters: {
     gap: spacing.sm

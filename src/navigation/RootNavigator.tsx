@@ -10,7 +10,7 @@ import { useAuth } from '@/store/AuthContext';
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export function RootNavigator() {
-  const { session, loading } = useAuth();
+  const { session, loading, isPasswordRecovery, needsStaffOnboarding, authMessage } = useAuth();
   const isAuthenticated = Boolean(session);
 
   return (
@@ -18,8 +18,18 @@ export function RootNavigator() {
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         {loading ? (
           <Stack.Screen name="AuthLoading" component={AuthLoadingScreen} />
+        ) : isPasswordRecovery && isAuthenticated ? (
+          <Stack.Screen name="AuthStack">
+            {() => <AuthStack initialRouteName="ResetPassword" />}
+          </Stack.Screen>
+        ) : needsStaffOnboarding && isAuthenticated ? (
+          <Stack.Screen name="AuthStack">
+            {() => <AuthStack initialRouteName="StaffAccountCreation" />}
+          </Stack.Screen>
         ) : !isAuthenticated ? (
-          <Stack.Screen name="AuthStack" component={AuthStack} />
+          <Stack.Screen name="AuthStack">
+            {() => <AuthStack initialRouteName={authMessage ? 'Login' : 'GetStarted'} />}
+          </Stack.Screen>
         ) : (
           <Stack.Screen name="AppStack" component={AppStack} />
         )}
