@@ -228,7 +228,8 @@ Sensitive files such as local .env files, signing credentials, passwords, privat
 
 Clone the repository
 
-git clone https://github.com/eswarb-dev/VenueVerse.gitcd VenueVerse
+git clone https://github.com/eswarb-dev/VenueVerse.git 
+cd VenueVerse
 
 Install dependencies
 
