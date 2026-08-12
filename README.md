@@ -1,10 +1,10 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/eswarb-dev/VenueVerse/main/Demo/banner.png" alt="VenueVerse Banner" width="760">
+<img src="Demo/banner.png" alt="VenueVerse Banner" width="700">
 
 <br><br>
 
-<img src="https://raw.githubusercontent.com/eswarb-dev/VenueVerse/main/assets/icon.png" alt="VenueVerse App Logo" width="100">
+<img src="Demo/logo.PNG" alt="VenueVerse App Logo" width="100">
 
 <br><br>
 
@@ -130,7 +130,9 @@ Git + GitHub
 
 <div align="center">
 
-▶ Watch the VenueVerse Demo Video
+<video src="Demo/demo_video.mp4" width="700" controls>
+  Your browser does not support embedded video.
+</video>
 
 </div>
 
@@ -142,16 +144,16 @@ Git + GitHub
 
 <table>
   <tr>
-    <td align="center"><img src="https://raw.githubusercontent.com/eswarb-dev/VenueVerse/main/Demo/1.png" alt="VenueVerse Screenshot 1" width="240"></td>
-    <td align="center"><img src="https://raw.githubusercontent.com/eswarb-dev/VenueVerse/main/Demo/2.png" alt="VenueVerse Screenshot 2" width="240"></td>
-    <td align="center"><img src="https://raw.githubusercontent.com/eswarb-dev/VenueVerse/main/Demo/3.png" alt="VenueVerse Screenshot 3" width="240"></td>
-    <td align="center"><img src="https://raw.githubusercontent.com/eswarb-dev/VenueVerse/main/Demo/4.png" alt="VenueVerse Screenshot 4" width="240"></td>
+    <td align="center"><img src="Demo/1.jpeg" alt="VenueVerse Screenshot 1" width="240"></td>
+    <td align="center"><img src="Demo/2.jpeg" alt="VenueVerse Screenshot 2" width="240"></td>
+    <td align="center"><img src="Demo/3.jpeg" alt="VenueVerse Screenshot 3" width="240"></td>
+    <td align="center"><img src="Demo/4.jpeg" alt="VenueVerse Screenshot 4" width="240"></td>
   </tr>
   <tr>
-    <td align="center"><img src="https://raw.githubusercontent.com/eswarb-dev/VenueVerse/main/Demo/5.png" alt="VenueVerse Screenshot 5" width="240"></td>
-    <td align="center"><img src="https://raw.githubusercontent.com/eswarb-dev/VenueVerse/main/Demo/6.png" alt="VenueVerse Screenshot 6" width="240"></td>
-    <td align="center"><img src="https://raw.githubusercontent.com/eswarb-dev/VenueVerse/main/Demo/7.png" alt="VenueVerse Screenshot 7" width="240"></td>
-    <td align="center"><img src="https://raw.githubusercontent.com/eswarb-dev/VenueVerse/main/Demo/8.png" alt="VenueVerse Screenshot 8" width="240"></td>
+    <td align="center"><img src="Demo/5.jpeg" alt="VenueVerse Screenshot 5" width="240"></td>
+    <td align="center"><img src="Demo/6.jpeg" alt="VenueVerse Screenshot 6" width="240"></td>
+    <td align="center"><img src="Demo/7.jpeg" alt="VenueVerse Screenshot 7" width="240"></td>
+    <td align="center"><img src="Demo/8.jpeg" alt="VenueVerse Screenshot 8" width="240"></td>
   </tr>
 </table>
 
