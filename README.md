@@ -130,13 +130,11 @@ Git + GitHub
 
 ## 🎬 Demo
 
-<div align="center">
-
-[▶ Watch the VenueVerse Demo](Demo/demo_video_compressed.mp4)
-
-</div>
+https://github.com/user-attachments/assets/1a915fe3-b94e-40c6-b17e-1be04f9738cf
 
 <br>
+
+## 🖼️ App Screenshots
 
 🖼️ App Screenshots
 
