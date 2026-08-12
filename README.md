@@ -132,7 +132,7 @@ Git + GitHub
 
 <div align="center">
 
-[▶ Watch the VenueVerse Demo](Demo/demo_video.mp4)
+[▶ Watch the VenueVerse Demo](Demo/demo_video_compressed.mp4)
 
 </div>
 
