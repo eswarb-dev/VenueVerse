@@ -1,6 +1,16 @@
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=6,11,20&height=190&section=header&text=VenueVerse&fontSize=55&fontColor=ffffff&animation=fadeIn&fontAlignY=38&desc=Campus%20Venue%20Booking%20%26%20Approval%20System&descAlignY=58&descSize=18" width="100%">
+<img src="Demo/banner.png" alt="VenueVerse Banner" width="100%">
+
+<br><br>
+
+<img src="Demo/logo.png" alt="VenueVerse App Logo" width="120">
+
+<br><br>
+
+<h1>VenueVerse</h1>
+
+<p><strong>Campus Venue Booking & Approval System</strong></p>
 
 <br>
 
@@ -111,6 +121,41 @@ Google Play Console
 Version Control
 
 Git + GitHub
+
+<br>
+
+<img src="https://capsule-render.vercel.app/api?type=rect&color=gradient&customColorList=6,11,20&height=3&section=header" width="100%">
+
+🎬 Demo
+
+<div align="center">
+
+▶ Watch the VenueVerse Demo Video
+
+</div>
+
+<br>
+
+🖼️ App Screenshots
+
+<div align="center">
+
+<table>
+  <tr>
+    <td align="center"><img src="Demo/1.png" alt="VenueVerse Screenshot 1" width="240"></td>
+    <td align="center"><img src="Demo/2.png" alt="VenueVerse Screenshot 2" width="240"></td>
+    <td align="center"><img src="Demo/3.png" alt="VenueVerse Screenshot 3" width="240"></td>
+    <td align="center"><img src="Demo/4.png" alt="VenueVerse Screenshot 4" width="240"></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="Demo/5.png" alt="VenueVerse Screenshot 5" width="240"></td>
+    <td align="center"><img src="Demo/6.png" alt="VenueVerse Screenshot 6" width="240"></td>
+    <td align="center"><img src="Demo/7.png" alt="VenueVerse Screenshot 7" width="240"></td>
+    <td align="center"><img src="Demo/8.png" alt="VenueVerse Screenshot 8" width="240"></td>
+  </tr>
+</table>
+
+</div>
 
 <br>
 
