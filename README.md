@@ -128,13 +128,13 @@ Git + GitHub
 
 🎬 Demo
 
-## 🎬 Demo
+🎬 Demo
 
-[https://github.com/user-attachments/assets/1a915fe3-b94e-40c6-b17e-1be04f9738cf](https://github.com/user-attachments/assets/a53f2efc-0731-488b-a028-9307670a751b)
+https://github.com/user-attachments/assets/1a915fe3-b94e-40c6-b17e-1be04f9738cf
 
 <br>
 
-## 🖼️ App Screenshots
+🖼️ App Screenshots
 
 🖼️ App Screenshots
 
@@ -163,25 +163,23 @@ Git + GitHub
 
 🏗️ Architecture
 
-flowchart TD
-    A[VenueVerse Mobile App] --> B[Supabase Authentication]
-    A --> C[Supabase PostgreSQL]
+flowchart TDA[VenueVerse Mobile App] --> B[Supabase Authentication]A --> C[Supabase PostgreSQL]
 
-    C --> D[Profiles]
-    C --> E[Halls]
-    C --> F[Bookings]
-    C --> G[Department Approvers]
-    C --> H[Notifications]
-    C --> I[Booking Receipts]
+C --> D[Profiles]
+C --> E[Halls]
+C --> F[Bookings]
+C --> G[Department Approvers]
+C --> H[Notifications]
+C --> I[Booking Receipts]
 
-    F --> J[Approval Workflow]
-    J --> G
-    J --> H
+F --> J[Approval Workflow]
+J --> G
+J --> H
 
-    H --> K[Push Notification Delivery]
-    K --> L[Firebase / Expo Notifications]
+H --> K[Push Notification Delivery]
+K --> L[Firebase / Expo Notifications]
 
-    F --> I
+F --> I
 
 <br>
 
@@ -194,8 +192,10 @@ flowchart LR
     B --> C[Select Venue]
     C --> D[Submit Booking Request]
     D --> E[Approver Review]
+
     E -->|Approved| F[Booking Confirmed]
     E -->|Rejected| G[Request Rejected]
+
     F --> H[Notification]
     F --> I[Booking Receipt]
 
@@ -218,7 +218,7 @@ VenueVerse/
 ├── tsconfig.json       # TypeScript configuration
 └── .env.example        # Environment-variable template
 
-Sensitive files such as local .env files, signing credentials, passwords, private keys and local secret directories should never be committed to the repository.
+Sensitive files such as local .env files, signing credentials, passwords, private keys, and local secret directories should never be committed to the repository.
 
 <br>
 
@@ -226,16 +226,15 @@ Sensitive files such as local .env files, signing credentials, passwords, privat
 
 🚀 Getting Started
 
-1. Clone the repository
+Clone the repository
 
-git clone https://github.com/eswarb-dev/VenueVerse.git
-cd VenueVerse
+git clone https://github.com/eswarb-dev/VenueVerse.gitcd VenueVerse
 
-2. Install dependencies
+Install dependencies
 
 npm install
 
-3. Configure environment variables
+Configure environment variables
 
 Create your local environment file using the provided template:
 
@@ -245,7 +244,7 @@ Add the required project values locally.
 
 Do not commit .env, signing passwords, service-account credentials, keystores, or other private secrets.
 
-4. Start the development server
+Start the development server
 
 npm start
 
@@ -261,8 +260,7 @@ npx expo start
 
 From the Android directory:
 
-cd android
-.\gradlew.bat bundleRelease
+cd android.\gradlew.bat bundleRelease
 
 The generated Android App Bundle is created under:
 
