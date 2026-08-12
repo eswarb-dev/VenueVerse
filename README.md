@@ -130,7 +130,7 @@ Git + GitHub
 
 ## 🎬 Demo
 
-https://github.com/user-attachments/assets/1a915fe3-b94e-40c6-b17e-1be04f9738cf
+[https://github.com/user-attachments/assets/1a915fe3-b94e-40c6-b17e-1be04f9738cf](https://github.com/user-attachments/assets/a53f2efc-0731-488b-a028-9307670a751b)
 
 <br>
 
